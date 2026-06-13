@@ -80,7 +80,15 @@ MVP providers:
 
 ## 5. GitHub Pages lifecycle (opt-in, target-repo side)
 
-`htmlup` itself never deletes anything. For users who want pages to expire, we offer an **opt-in cron GitHub Action installed in the target repo** (not in this repo, not run by the CLI). It periodically removes published directories older than a configured TTL based on commit metadata. This is a documented template the user copies into their Pages repo; design and template live in a later pass. Out of scope for the MVP CLI.
+The publish path itself never deletes anything. For users who want pages to expire, we offer an **opt-in cron GitHub Actions workflow installed in the target repo** (not in this repo, not run by the CLI at publish time). It periodically removes published top-level entries older than a configured TTL based on each entry's last-commit date.
+
+`htmlup github setup --repo owner/name` installs this workflow in one shot. It:
+
+1. publishes a generated hello-world `index.html` to the Pages branch (default `gh-pages`),
+2. enables GitHub Pages (branch source, path `/`), and
+3. commits `.github/workflows/htmlup-cleanup.yaml` to the target repo's **default branch**.
+
+The workflow runs on `--cron` (default `0 3 * * 0`, weekly Sun 03:00 UTC) plus `workflow_dispatch`, holds `contents: write`, checks out the Pages branch, and deletes top-level entries whose last commit is older than `--ttl-days` (default 30). It never removes `index.html`, `CNAME`, `.nojekyll`, or `.github`; `--exclude` (repeatable / comma-separated glob patterns) adds more entries to that protected list. The CLI commits the workflow once and exits; all deletion happens later, on schedule, inside the target repo — the publish path remains stateless and lifecycle-free.
 
 ## 6. S3 exposure
 

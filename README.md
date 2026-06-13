@@ -2,12 +2,14 @@
 
 Publish HTML pages to the public web with one command. `htmlup` uploads a file or a directory of static HTML and hands you a public URL — no servers to manage.
 
-Two backends ship in the MVP:
+**See it live:** [truehhart.github.io/htmlup](https://truehhart.github.io/htmlup/) — this project's own landing page, published with `htmlup` itself.
+
+Two backends ship today:
 
 - **GitHub Pages** — pushes your files to a repo and lets GitHub Pages serve them.
 - **S3** — uploads objects to a bucket, exposed via CloudFront (a built-in HTTP server may come later).
 
-`htmlup` does **no lifecycle management** of what it uploads — it publishes and exits. For GitHub Pages you can optionally enable a cron GitHub Action in the target repo to expire old pages (see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)).
+`htmlup` does **no lifecycle management** of what it uploads — it publishes and exits. For GitHub Pages, `htmlup github setup` can install an opt-in cron GitHub Actions workflow in the target repo to expire old pages automatically (see [GitHub Pages cleanup](#github-pages-cleanup) and [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)).
 
 ## Stack
 
@@ -15,7 +17,7 @@ Go 1.26 · [cobra](https://github.com/spf13/cobra) CLI · [`aws-sdk-go-v2`](http
 
 Architecture & command reference: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Agent conventions: [`CLAUDE.md`](CLAUDE.md).
 
-> **Status:** scaffolding. The CLI is under active development; the command surface below is the design target.
+> **Status:** working software, early days. The GitHub Pages and S3 publish flows and `github setup` are implemented; expect rough edges and an evolving feature set.
 
 ## Getting started
 
@@ -28,17 +30,35 @@ mise run build      # produces ./bin/htmlup
 mise run check      # fmt + vet + lint + test (also runs on pre-commit)
 ```
 
-## Usage (design target)
+## Usage
+
+Each provider is a top-level subcommand; its flags are scoped to that command. `<path>` is a single `.html` file or a directory (uploaded recursively, relative structure preserved).
 
 ```sh
 # GitHub Pages
-htmlup publish ./site --to github --repo owner/repo [--branch gh-pages] [--dir docs] [--cname example.com]
+htmlup github publish ./site --repo owner/repo [--branch gh-pages] [--dir docs] [--cname example.com]
 
 # S3 (exposed via CloudFront)
-htmlup publish ./site --to s3 --bucket my-bucket [--prefix path/] [--region us-east-1]
+htmlup s3 publish ./site --bucket my-bucket [--prefix path/] [--region us-east-1]
 ```
 
-Global flags: `--dry-run` (show what would be uploaded), `-v/--verbose`.
+Each `publish` command also accepts `--dry-run` (enumerate what would be uploaded and the resulting URL, write nothing) and `-v/--verbose` (per-file progress). On success the command prints the public URL.
+
+### GitHub Pages cleanup
+
+`htmlup github setup` bootstraps a repo for use with `htmlup` in one shot:
+
+```sh
+htmlup github setup --repo owner/name [--branch gh-pages] [--ttl-days 30] [--cron "0 3 * * 0"] [--exclude drafts/*] [--dry-run] [-v]
+```
+
+It:
+
+1. Publishes a generated hello-world `index.html` to the Pages branch.
+2. Enables GitHub Pages (branch source, path `/`).
+3. Installs an opt-in cron cleanup workflow at `.github/workflows/htmlup-cleanup.yaml` on the repo's **default branch**.
+
+The cleanup workflow runs on the `--cron` schedule (default weekly, Sunday 03:00 UTC) and deletes published top-level entries on the Pages branch older than `--ttl-days` (default 30), based on each entry's last commit date. It never removes `index.html`, `CNAME`, `.nojekyll`, or `.github`; pass `--exclude` (repeatable or comma-separated glob patterns, e.g. `--exclude drafts/*,keep.html`) to protect more entries.
 
 ## Authentication
 
@@ -53,8 +73,8 @@ This repo doubles as a [Claude Code plugin marketplace](https://docs.claude.com/
 
 ```sh
 # In Claude Code
-/plugin marketplace add truehhart/htmlupclaude
-/plugin install htmlup@htmlupclaude
+/plugin marketplace add truehhart/htmlup
+/plugin install htmlup@htmlup
 ```
 
 Marketplace manifest: [`.claude-plugin/marketplace.json`](.claude-plugin/marketplace.json). Skill source: [`plugins/htmlup/`](plugins/htmlup/).
@@ -80,7 +100,7 @@ cosign verify-blob \
   --certificate htmlup_*_SHA256SUMS.pem \
   --signature htmlup_*_SHA256SUMS.sig \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  --certificate-identity-regexp 'github\.com/truehhart/htmlupclaude' \
+  --certificate-identity-regexp 'github\.com/truehhart/htmlup' \
   htmlup_*_SHA256SUMS
 ```
 
