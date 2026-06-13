@@ -33,6 +33,7 @@ type Provider struct {
 	ttlDays int
 	cron    string
 	exclude []string
+	noAuto  bool
 }
 
 func (p *Provider) Name() string { return "github" }
@@ -64,11 +65,14 @@ func (p *Provider) publishCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			// By default, target wherever Pages already serves from. Setting
+			// --branch/--dir explicitly (or --no-auto) opts back into manual mode.
+			autoDetect := !p.noAuto && !cmd.Flags().Changed("branch") && !cmd.Flags().Changed("dir")
 			result, err := p.publish(cmd.Context(), provider.Target{
 				Files:   files,
 				DryRun:  dryRun,
 				Verbose: verbose,
-			})
+			}, autoDetect)
 			if err != nil {
 				return err
 			}
@@ -78,9 +82,10 @@ func (p *Provider) publishCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&p.repo, "repo", "", "target repository (owner/name)")
 	_ = cmd.MarkFlagRequired("repo")
-	cmd.Flags().StringVar(&p.branch, "branch", "gh-pages", "branch to push to")
-	cmd.Flags().StringVar(&p.dir, "dir", "", "subdirectory within the branch")
+	cmd.Flags().StringVar(&p.branch, "branch", "gh-pages", "branch to push to (default: auto-detected from Pages settings)")
+	cmd.Flags().StringVar(&p.dir, "dir", "", "subdirectory within the branch (default: auto-detected from Pages settings)")
 	cmd.Flags().StringVar(&p.cname, "cname", "", "custom domain (writes CNAME file)")
+	cmd.Flags().BoolVar(&p.noAuto, "no-auto", false, "don't auto-detect the target from GitHub Pages settings; use --branch/--dir as given")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show what would be uploaded without writing")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "per-file progress and SDK detail")
 	return cmd
@@ -94,7 +99,7 @@ func (p *Provider) validate() error {
 	return nil
 }
 
-func (p *Provider) publish(ctx context.Context, t provider.Target) (provider.Result, error) {
+func (p *Provider) publish(ctx context.Context, t provider.Target, autoDetect bool) (provider.Result, error) {
 	owner, repoName := p.ownerRepo()
 
 	token, err := resolveToken(ctx)
@@ -108,6 +113,17 @@ func (p *Provider) publish(ctx context.Context, t provider.Target) (provider.Res
 		)),
 	)
 
+	// Unless told otherwise, target wherever GitHub Pages already serves from
+	// (its branch + source path). Falls back to the flag defaults when Pages is
+	// off or built from a workflow.
+	var autoURL string
+	if autoDetect {
+		autoURL = p.applyAutoTarget(ctx, client, owner, repoName)
+		if autoURL != "" && t.Verbose {
+			fmt.Fprintf(os.Stderr, "auto-detected Pages source: branch %s, dir %q\n", p.branch, p.dir)
+		}
+	}
+
 	entries, err := collectFiles(t.Files, p.dir)
 	if err != nil {
 		return provider.Result{}, fmt.Errorf("reading files: %w", err)
@@ -120,12 +136,15 @@ func (p *Provider) publish(ctx context.Context, t provider.Target) (provider.Res
 	}
 
 	url := p.pagesURL(owner, repoName)
+	if autoURL != "" && p.cname == "" {
+		url = autoURL
+	}
 
 	if t.DryRun {
 		for _, e := range entries {
 			fmt.Fprintf(os.Stderr, "would upload: %s\n", e.path)
 		}
-		fmt.Fprintf(os.Stderr, "target: %s branch %s (%d files)\n", p.repo, p.branch, len(entries))
+		fmt.Fprintf(os.Stderr, "target: %s branch %s dir %q (%d files)\n", p.repo, p.branch, p.dir, len(entries))
 		return provider.Result{URL: url}, nil
 	}
 
@@ -199,6 +218,34 @@ func (p *Provider) ensurePages(ctx context.Context, client *github.Client, owner
 		return fmt.Errorf("enabling GitHub Pages: %w", err)
 	}
 	return nil
+}
+
+// applyAutoTarget points the publish at wherever GitHub Pages already serves
+// from, overriding branch/dir. It returns the live Pages URL on success, or ""
+// (leaving the flag defaults untouched) when Pages is off, built from a
+// workflow, or otherwise can't be read.
+func (p *Provider) applyAutoTarget(ctx context.Context, client *github.Client, owner, repo string) string {
+	info, _, err := client.Repositories.GetPagesInfo(ctx, owner, repo)
+	if err != nil {
+		return ""
+	}
+	branch, dir, ok := pagesTarget(info.GetBuildType(), info.GetSource().GetBranch(), info.GetSource().GetPath())
+	if !ok {
+		return ""
+	}
+	p.branch = branch
+	p.dir = dir
+	return info.GetHTMLURL()
+}
+
+// pagesTarget maps a GitHub Pages branch source to a publish target. ok is false
+// when there is no branch to push to (workflow build type or empty source), so
+// the caller keeps its defaults.
+func pagesTarget(buildType, srcBranch, srcPath string) (branch, dir string, ok bool) {
+	if buildType == "workflow" || srcBranch == "" {
+		return "", "", false
+	}
+	return srcBranch, strings.TrimPrefix(srcPath, "/"), true
 }
 
 // pagesMismatchWarning returns a message when GitHub Pages is configured to

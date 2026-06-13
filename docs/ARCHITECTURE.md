@@ -28,9 +28,12 @@ Each provider is a top-level subcommand. Provider-specific flags are scoped to t
 | Flag | Required | Purpose |
 |---|---|---|
 | `--repo owner/name` | yes | target repository |
-| `--branch` | no (default `gh-pages`) | branch to push to |
-| `--dir` | no | subdirectory within the branch |
+| `--branch` | no | branch to push to (default: auto-detected from the repo's Pages source, else `gh-pages`) |
+| `--dir` | no | subdirectory within the branch (default: auto-detected from the Pages source path) |
 | `--cname` | no | write a `CNAME` file for a custom domain |
+| `--no-auto` | no | disable Pages auto-detection; use `--branch`/`--dir` as given |
+
+By default `publish` targets wherever GitHub Pages already serves from: it reads the repo's Pages source (branch + path) and pushes there, so a plain `htmlup github publish ./site --repo owner/name` lands in the right place. Setting `--branch`/`--dir` explicitly (or `--no-auto`) switches to manual targeting; if Pages is off or built from a workflow, it falls back to `gh-pages`.
 
 **`htmlup s3 publish`**
 

@@ -1,6 +1,8 @@
 # htmlup
 
-Publish HTML pages to the public web with one command. `htmlup` uploads a file or a directory of static HTML and hands you a public URL — no servers to manage.
+You ask Claude Code for a dashboard, a report, a one-off landing page — and you get an HTML file. Now what? Emailing it, zipping it, or telling someone to "open this in your browser" is a pain, and the file loses all its links and assets the moment it leaves your machine.
+
+`htmlup` fixes that: point it at a file or a directory of static HTML and it hands you a public URL — no servers to manage, no hosting account to wire up. Generate it, publish it, share the link.
 
 **See it live:** [truehhart.github.io/htmlup](https://truehhart.github.io/htmlup/) — this project's own landing page, published with `htmlup` itself.
 
@@ -34,9 +36,11 @@ mise run check      # fmt + vet + lint + test (also runs on pre-commit)
 
 Each provider is a top-level subcommand; its flags are scoped to that command. `<path>` is a single `.html` file or a directory (uploaded recursively, relative structure preserved).
 
+By default `github publish` targets wherever GitHub Pages already serves from (its branch + source path are auto-detected), so you usually don't pass `--branch`/`--dir`. Set them explicitly — or pass `--no-auto` — for manual targeting (falls back to `gh-pages` when Pages isn't set up yet).
+
 ```sh
-# GitHub Pages
-htmlup github publish ./site --repo owner/repo [--branch gh-pages] [--dir docs] [--cname example.com]
+# GitHub Pages — branch/dir auto-detected from the repo's Pages settings
+htmlup github publish ./site --repo owner/repo [--cname example.com] [--no-auto --branch gh-pages --dir docs]
 
 # S3 (exposed via CloudFront)
 htmlup s3 publish ./site --bucket my-bucket [--prefix path/] [--region us-east-1]

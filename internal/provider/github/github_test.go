@@ -168,6 +168,29 @@ func TestHelloWorldHTML(t *testing.T) {
 	}
 }
 
+func TestPagesTarget(t *testing.T) {
+	tests := []struct {
+		name                          string
+		buildType, srcBranch, srcPath string
+		wantBranch, wantDir           string
+		wantOK                        bool
+	}{
+		{"legacy docs folder", "legacy", "master", "/docs", "master", "docs", true},
+		{"legacy root", "legacy", "gh-pages", "/", "gh-pages", "", true},
+		{"workflow build type", "workflow", "", "", "", "", false},
+		{"empty branch", "legacy", "", "/", "", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			branch, dir, ok := pagesTarget(tt.buildType, tt.srcBranch, tt.srcPath)
+			if branch != tt.wantBranch || dir != tt.wantDir || ok != tt.wantOK {
+				t.Errorf("pagesTarget() = (%q, %q, %v), want (%q, %q, %v)",
+					branch, dir, ok, tt.wantBranch, tt.wantDir, tt.wantOK)
+			}
+		})
+	}
+}
+
 func TestPublishMessage(t *testing.T) {
 	one := publishMessage([]fileEntry{{path: "docs/index.html"}})
 	if one != "publish docs/index.html via htmlup" {
