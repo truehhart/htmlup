@@ -34,10 +34,25 @@ Always set `shell` explicitly. Use `bash -euo pipefail {0}` to fail on errors, u
   run: mise run check
 ```
 
+## Run names
+
+Every workflow sets `run-name:` dynamically so a run is identifiable at a glance
+from the Actions list — `<Workflow> <version-or-ref>`, e.g. `Release v1.2.3`.
+
+```yaml
+name: Release
+run-name: Release ${{ inputs.tag }}
+```
+
+Use the most specific identifier available: the release tag for tag/dispatch
+flows, otherwise `github.ref_name`. Reusable workflows (`workflow_call`-only) run
+nested under the caller, so their `run-name` is cosmetic — still set it for when
+they are dispatched directly.
+
 ## Workflows
 
 | Workflow | Trigger | What |
 |---|---|---|
-| `check.yaml` | push/PR to `master`, `v*` tags, reusable | lint (fmt + vet + golangci-lint + htmlhint) and test in parallel |
-| `publish.yaml` | reusable (`workflow_call`) | GoReleaser builds + signs + creates the GitHub release |
-| `release.yaml` | `v*` tag push | orchestrator — calls `check.yaml`, then `publish.yaml` (`needs: check`) |
+| `check.yaml` | push/PR to `master`, `v*` tags, reusable | lint (fmt + vet + golangci-lint + htmlhint + shellcheck) and test in parallel |
+| `publish.yaml` | reusable (`workflow_call`, `version` input) | GoReleaser builds + signs (no publish); `softprops/action-gh-release` creates the tag, generates notes, uploads artifacts |
+| `release.yaml` | manual (`workflow_dispatch`, `version` without `v`) | orchestrator — validate version → `check.yaml` → `publish.yaml` (`needs: check`) |

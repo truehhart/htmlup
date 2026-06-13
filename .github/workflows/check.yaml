@@ -1,4 +1,5 @@
 name: Check
+run-name: Check ${{ github.ref_name }}
 
 on:
   push:
@@ -42,6 +43,10 @@ jobs:
       - name: '[Lint] | HTML'
         shell: bash -euo pipefail {0}
         run: htmlhint docs/site internal/provider/github/templates
+
+      - name: '[Lint] | Shell'
+        shell: bash -euo pipefail {0}
+        run: shellcheck internal/provider/github/templates/cleanup.sh
 
   test:
     runs-on: ubuntu-latest
