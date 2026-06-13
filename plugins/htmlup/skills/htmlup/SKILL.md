@@ -30,8 +30,10 @@ Each provider is a top-level subcommand; its flags are scoped to that provider's
 GitHub Pages:
 
 ```sh
-htmlup github publish <path> --repo owner/repo [--branch gh-pages] [--dir docs] [--cname example.com]
+htmlup github publish <path> --repo owner/repo [--cname example.com] [--no-auto --branch gh-pages --dir docs]
 ```
+
+By default the target branch and subdirectory are auto-detected from the repo's existing GitHub Pages source, so a plain `htmlup github publish <path> --repo owner/repo` lands where Pages already serves. Pass `--branch`/`--dir` (or `--no-auto`) only for manual targeting; it falls back to `gh-pages` when Pages isn't set up.
 
 S3 (exposed via CloudFront):
 
