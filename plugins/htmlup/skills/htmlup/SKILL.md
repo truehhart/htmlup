@@ -7,7 +7,7 @@ description: Publish HTML pages to the public web with the htmlup CLI — upload
 
 `htmlup` takes local HTML (a single file or a directory of static assets) and makes it publicly reachable. It is stateless: it uploads and exits, and does no lifecycle management of what it publishes.
 
-> **Status:** the CLI is under active development. This skill documents the design-target command surface; verify against `htmlup --help` before relying on exact flags.
+> **Status:** working software, early days. The GitHub Pages and S3 publish flows and `github setup` are implemented. The CLI is still evolving, so verify against `htmlup --help` if a flag seems off.
 
 ## Decide the backend
 
@@ -25,21 +25,23 @@ If the user hasn't said, ask which backend they want rather than guessing.
 
 ## Commands
 
+Each provider is a top-level subcommand; its flags are scoped to that provider's `publish` command.
+
 GitHub Pages:
 
 ```sh
-htmlup publish <path> --to github --repo owner/repo [--branch gh-pages] [--dir docs] [--cname example.com]
+htmlup github publish <path> --repo owner/repo [--branch gh-pages] [--dir docs] [--cname example.com]
 ```
 
 S3 (exposed via CloudFront):
 
 ```sh
-htmlup publish <path> --to s3 --bucket my-bucket [--prefix path/] [--region us-east-1]
+htmlup s3 publish <path> --bucket my-bucket [--prefix path/] [--region us-east-1]
 ```
 
 `<path>` is a single `.html` file or a directory (uploaded recursively, relative structure preserved).
 
-Useful global flags:
+Useful flags (on each `publish` command):
 
 - `--dry-run` — preview what would be uploaded and the resulting URL without writing anything. Prefer this first when the target is unfamiliar.
 - `-v, --verbose` — per-file progress.
@@ -54,5 +56,5 @@ Useful global flags:
 
 ## Notes
 
-- `htmlup` does not expire or clean up old uploads. For GitHub Pages, mention the optional cron GitHub Action template (installed in the *target* repo) if the user asks about cleanup.
+- `htmlup` does not expire or clean up old uploads on its own. For GitHub Pages, `htmlup github setup --repo owner/name [--branch gh-pages] [--ttl-days 30] [--cron "0 3 * * 0"] [--exclude drafts/*]` bootstraps a repo: it publishes a hello-world landing page, enables Pages, and installs an opt-in cron cleanup workflow (`.github/workflows/htmlup-cleanup.yaml`) on the repo's default branch. That workflow deletes published top-level entries older than `--ttl-days` and never touches `index.html`, `CNAME`, `.nojekyll`, `.github`, or any extra `--exclude` glob patterns. Suggest it if the user asks about cleanup or is setting up a fresh Pages repo.
 - Windows is not supported; binaries are `linux`/`darwin` on `amd64`/`arm64`.
