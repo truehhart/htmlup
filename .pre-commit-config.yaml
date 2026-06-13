@@ -1,0 +1,22 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-added-large-files
+        args: [--maxkb=1024]
+      - id: check-merge-conflict
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: mixed-line-ending
+        args: [--fix=lf]
+      - id: detect-private-key
+      - id: check-yaml
+
+  - repo: local
+    hooks:
+      - id: mise-check
+        name: mise check (fmt + vet + lint + test)
+        entry: mise run check
+        language: system
+        pass_filenames: false
+        always_run: true
