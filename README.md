@@ -59,6 +59,38 @@ This repo doubles as a [Claude Code plugin marketplace](https://docs.claude.com/
 
 Marketplace manifest: [`.claude-plugin/marketplace.json`](.claude-plugin/marketplace.json). Skill source: [`plugins/htmlup/`](plugins/htmlup/).
 
+## Verifying releases
+
+Every release publishes a `SHA256SUMS` file signed with both [Sigstore cosign](https://docs.sigstore.dev/) (keyless) and GPG.
+
+**GPG fingerprint:** `5B91 15D2 57D7 B6FB 65FF  FCA7 DE4C 8787 683F EE7E`
+
+### 1. Verify checksums
+
+```sh
+# Download the binary and SHA256SUMS from the release page, then:
+sha256sum --check htmlup_*_SHA256SUMS        # Linux
+shasum -a 256 --check htmlup_*_SHA256SUMS    # macOS
+```
+
+### 2. Verify cosign signature (keyless)
+
+```sh
+cosign verify-blob \
+  --certificate htmlup_*_SHA256SUMS.pem \
+  --signature htmlup_*_SHA256SUMS.sig \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp 'github\.com/truehhart/htmlupclaude' \
+  htmlup_*_SHA256SUMS
+```
+
+### 3. Verify GPG signature
+
+```sh
+gpg --import release/pubkey.asc                                  # one-time: import from this repo
+gpg --verify htmlup_*_SHA256SUMS.gpgsig htmlup_*_SHA256SUMS
+```
+
 ## License
 
 [MIT](LICENSE) © Dmitrii Parshenkov
