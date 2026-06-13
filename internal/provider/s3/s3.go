@@ -14,8 +14,8 @@ import (
 	s3svc "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/spf13/cobra"
 
-	"github.com/truehhart/htmlupclaude/internal/fsutil"
-	"github.com/truehhart/htmlupclaude/internal/provider"
+	"github.com/truehhart/htmlup/internal/fsutil"
+	"github.com/truehhart/htmlup/internal/provider"
 )
 
 func init() {

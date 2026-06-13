@@ -5,10 +5,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/truehhart/htmlupclaude/internal/provider"
+	"github.com/truehhart/htmlup/internal/provider"
 
-	_ "github.com/truehhart/htmlupclaude/internal/provider/github"
-	_ "github.com/truehhart/htmlupclaude/internal/provider/s3"
+	_ "github.com/truehhart/htmlup/internal/provider/github"
+	_ "github.com/truehhart/htmlup/internal/provider/s3"
 )
 
 func main() {
