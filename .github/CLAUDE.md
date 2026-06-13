@@ -38,5 +38,6 @@ Always set `shell` explicitly. Use `bash -euo pipefail {0}` to fail on errors, u
 
 | Workflow | Trigger | What |
 |---|---|---|
-| `check.yaml` | push/PR to `master`, `v*` tags, reusable | lint (fmt + vet + golangci-lint) and test in parallel |
-| `release.yaml` | `v*` tag push | GoReleaser builds + GitHub release |
+| `check.yaml` | push/PR to `master`, `v*` tags, reusable | lint (fmt + vet + golangci-lint + htmlhint) and test in parallel |
+| `publish.yaml` | reusable (`workflow_call`) | GoReleaser builds + signs + creates the GitHub release |
+| `release.yaml` | `v*` tag push | orchestrator — calls `check.yaml`, then `publish.yaml` (`needs: check`) |
