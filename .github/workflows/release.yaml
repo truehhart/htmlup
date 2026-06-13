@@ -41,7 +41,7 @@ jobs:
       # App token, not GITHUB_TOKEN — a GITHUB_TOKEN push won't trigger publish.yaml.
       - name: '[Setup] | Mint release token'
         id: token
-        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           app-id: ${{ secrets.RELEASE_APP_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
