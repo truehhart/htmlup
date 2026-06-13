@@ -1,0 +1,9 @@
+{
+  "name": "htmlup",
+  "description": "Drive the htmlup CLI to publish HTML pages publicly via GitHub Pages or S3.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Dmitrii Parshenkov",
+    "url": "https://github.com/truehhart"
+  }
+}
