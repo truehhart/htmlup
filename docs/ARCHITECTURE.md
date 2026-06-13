@@ -97,3 +97,5 @@ The MVP only uploads objects. Public exposure is the operator's responsibility, 
 ## 7. Distribution
 
 GoReleaser produces static binaries for `linux`/`darwin` × `amd64`/`arm64` (no Windows). Releases are cut by the **manually-triggered `release.yaml`** workflow: it takes a `version` input (without the leading `v`), validates it, runs the check suite, then GoReleaser builds + signs the archives and `SHA256SUMS` (cosign keyless + GPG) while `softprops/action-gh-release` creates the `v<version>` tag, generates release notes, and uploads the signed artifacts (updating an existing release gracefully).
+
+Versions are immutable: re-running `release.yaml` for a `version` whose tag already exists will not move the tag (it stays at the original commit), so a re-run only makes sense for the same commit. To ship new content, bump the version.
