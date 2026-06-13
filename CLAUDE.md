@@ -30,6 +30,7 @@
 | Path | Purpose |
 |---|---|
 | `cmd/htmlup/` | binary entrypoint + cobra command wiring |
+| `internal/fsutil/` | `ResolveFS` helper (file/dir → `fs.FS`) |
 | `internal/provider/` | `Provider` interface + registry |
 | `internal/provider/github/` | GitHub Pages backend (`go-github`) |
 | `internal/provider/s3/` | S3 backend (`aws-sdk-go-v2`) |
@@ -37,8 +38,6 @@
 | `.claude-plugin/marketplace.json` | plugin marketplace manifest |
 | `plugins/htmlup/` | the published Claude skill plugin |
 | `mise-tasks/` | Nushell automation |
-
-> The package layout above is the agreed design target; implementing agents create these packages. This pass scaffolds docs/config only — no functional Go code, no CI.
 
 ## Distribution
 

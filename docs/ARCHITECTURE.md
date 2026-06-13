@@ -1,6 +1,6 @@
 # Architecture — htmlup
 
-> Design reference. This document is the source of truth for the command surface, the provider abstraction, the auth model, and the GitHub Pages lifecycle story. Implementation lands in later passes; nothing here is built yet.
+> Design reference. This document is the source of truth for the command surface, the provider abstraction, the auth model, and the GitHub Pages lifecycle story.
 
 ## 1. What it is
 
@@ -9,29 +9,30 @@
 ## 2. Command surface
 
 ```
-htmlup publish <path> --to <github|s3> [provider flags] [global flags]
+htmlup <provider> publish <path> [flags]
 ```
 
-- `<path>` — a single `.html` file or a directory of static assets. Directories upload recursively, preserving relative structure.
-- `--to` — selects the provider. The flag value is the provider's registered name; adding a provider adds a value here automatically (see §3).
+Each provider is a top-level subcommand. Provider-specific flags are scoped to the provider's `publish` command — no flag collisions are possible.
 
-**Global flags**
+- `<path>` — a single `.html` file or a directory of static assets. Directories upload recursively, preserving relative structure.
+
+**Common flags** (on every provider's `publish` command)
 
 | Flag | Purpose |
 |---|---|
 | `--dry-run` | enumerate what would be uploaded and the resulting URL; perform no writes |
 | `-v, --verbose` | per-file progress and SDK-level detail |
 
-**GitHub Pages provider**
+**`htmlup github publish`**
 
 | Flag | Required | Purpose |
 |---|---|---|
 | `--repo owner/name` | yes | target repository |
 | `--branch` | no (default `gh-pages`) | branch to push to |
-| `--dir` | no | subdirectory within the branch (Pages "folder" source) |
+| `--dir` | no | subdirectory within the branch |
 | `--cname` | no | write a `CNAME` file for a custom domain |
 
-**S3 provider**
+**`htmlup s3 publish`**
 
 | Flag | Required | Purpose |
 |---|---|---|
@@ -58,14 +59,12 @@ type Result struct {
 }
 
 type Provider interface {
-    Name() string                                  // registry key, also the --to value
-    BindFlags(*pflag.FlagSet)                       // provider-specific flags
-    Validate() error                                // post-parse flag validation
-    Publish(ctx context.Context, t Target) (Result, error)
+    Name() string              // registry key, also the subcommand name
+    Command() *cobra.Command   // returns the provider's subcommand tree
 }
 ```
 
-Providers self-register into a registry (`init()` → `provider.Register(...)`). `cmd/htmlup` discovers them generically: the `--to` enum and per-provider flag groups are derived from the registry, never hardcoded in the core command. **Adding a backend = one new package under `internal/provider/<name>/` + registration. No edits to the publish command.**
+Providers self-register into a registry (`init()` → `provider.Register(...)`). `cmd/htmlup` discovers them generically: each provider's `Command()` is added as a child of the root cobra command. **Adding a backend = one new package under `internal/provider/<name>/` + registration. No edits to `cmd/htmlup/`.**
 
 MVP providers:
 
