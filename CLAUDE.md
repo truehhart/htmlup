@@ -42,3 +42,7 @@
 ## Distribution
 
 GoReleaser builds static binaries for `linux`/`darwin` × `amd64`/`arm64` (no Windows). Releases are cut from `v*` tags via `release.yaml`. Each release publishes tar.gz archives (binary + LICENSE + README) and standalone binaries.
+
+GoReleaser also publishes a **Homebrew cask** to the separate [`truehhart/homebrew-tap`](https://github.com/truehhart/homebrew-tap) repo (`brew install truehhart/tap/htmlup`) — `homebrew_casks` in `.goreleaser.yaml`, which covers macOS and Linux (the deprecated `brews` formula is **not** used). A post-install hook strips the macOS Gatekeeper quarantine xattr since the binaries aren't notarized.
+
+A single **GitHub App** (secrets `RELEASE_APP_ID` / `RELEASE_APP_PRIVATE_KEY`, `Contents: read & write`, installed on both `htmlup` and `homebrew-tap`) backs the release flow — never a long-lived PAT. `release.yaml` mints a token to push the `v*` tag (a `GITHUB_TOKEN` push would not trigger `publish.yaml`); `publish.yaml` mints a tap-scoped token for GoReleaser's cross-repo cask push.

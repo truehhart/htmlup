@@ -22,6 +22,33 @@ archives:
     formats: [binary]
     name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
 
+homebrew_casks:
+  - name: htmlup
+    # Pull from the tar.gz archive, not the standalone-binary archive.
+    ids: [archive]
+    binaries:
+      - htmlup
+    repository:
+      owner: truehhart
+      name: homebrew-tap
+      branch: master
+      # Short-lived GitHub App installation token minted in publish.yaml; the
+      # default GITHUB_TOKEN is scoped to this repo and can't push to the tap.
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    homepage: "https://github.com/truehhart/htmlup"
+    description: "Upload HTML pages and make them publicly available"
+    commit_author:
+      name: goreleaser-bot
+      email: goreleaser-bot@users.noreply.github.com
+    hooks:
+      post:
+        # The binaries aren't Apple-notarized, so strip the Gatekeeper
+        # quarantine xattr on macOS; skipped on Linux via the OS guard.
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/htmlup"]
+          end
+
 checksum:
   name_template: "{{ .ProjectName }}_{{ .Version }}_SHA256SUMS"
   algorithm: sha256

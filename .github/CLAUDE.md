@@ -24,6 +24,10 @@ Always name every step. Use the convention `[TYPE] | Action`:
   run: go build -o bin/htmlup ./cmd/htmlup
 ```
 
+## Comments
+
+Step names already say *what* a step does — don't restate it in a comment. Add a comment only for non-obvious *why*: a gotcha or constraint not visible from the step itself (e.g. why a tag is pushed with an App token rather than `GITHUB_TOKEN`). Keep it to one line. When in doubt, omit.
+
 ## Shell steps
 
 Always set `shell` explicitly. Use `bash -euo pipefail {0}` to fail on errors, unset variables, and broken pipes:
@@ -37,11 +41,12 @@ Always set `shell` explicitly. Use `bash -euo pipefail {0}` to fail on errors, u
 ## Run names
 
 Every workflow sets `run-name:` dynamically so a run is identifiable at a glance
-from the Actions list — `<Workflow> <version-or-ref>`, e.g. `Release v1.2.3`.
+from the Actions list — `<workflow> <version-or-ref>`, e.g. `release v1.2.3`.
+Workflow `name:` and `run-name:` are **lowercase** by convention.
 
 ```yaml
-name: Release
-run-name: Release ${{ inputs.tag }}
+name: release
+run-name: release ${{ inputs.tag }}
 ```
 
 Use the most specific identifier available: the release tag for tag/dispatch
@@ -53,6 +58,6 @@ they are dispatched directly.
 
 | Workflow | Trigger | What |
 |---|---|---|
-| `check.yaml` | push/PR to `master`, `v*` tags, reusable | lint (fmt + vet + golangci-lint + htmlhint + shellcheck) and test in parallel |
-| `publish.yaml` | reusable (`workflow_call`, `version` input) | pushes the `v<version>` tag + builds from it; GoReleaser builds, signs (cosign + GPG), and publishes the release (archives + standalone binaries + signed `SHA256SUMS`, `mode: replace`) |
-| `release.yaml` | manual (`workflow_dispatch`, `version` without `v`) | orchestrator — validate version → `check.yaml` → `publish.yaml` (`needs: check`) |
+| `check.yaml` | push/PR to `master`, reusable | lint (fmt + vet + golangci-lint + htmlhint + shellcheck) and test in parallel |
+| `release.yaml` | manual (`workflow_dispatch`, `version` without `v`) | validate version → `check.yaml` → create and push the `v<version>` tag, then **stops**. The tag is pushed with a GitHub App token (`RELEASE_APP_*`), not `GITHUB_TOKEN`, so the push triggers `publish.yaml` (`GITHUB_TOKEN` pushes do not start workflow runs). |
+| `publish.yaml` | `push` of a `v*` tag | builds from the tag — GoReleaser builds, signs (cosign + GPG), publishes the release (archives + standalone binaries + signed `SHA256SUMS`, `mode: replace`), and pushes the Homebrew cask to `truehhart/homebrew-tap` (cross-repo push uses an App token from `RELEASE_APP_*`, scoped to `homebrew-tap`) |
