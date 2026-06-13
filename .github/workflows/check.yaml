@@ -1,10 +1,9 @@
-name: Check
-run-name: Check ${{ github.ref_name }}
+name: check
+run-name: check ${{ github.ref_name }}
 
 on:
   push:
     branches: [master]
-    tags: ['v*']
   pull_request:
     branches: [master]
   workflow_call:

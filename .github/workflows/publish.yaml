@@ -1,13 +1,10 @@
-name: Publish
-run-name: Publish v${{ inputs.version }}
+name: publish
+run-name: publish ${{ github.ref_name }}
 
 on:
-  workflow_call:
-    inputs:
-      version:
-        description: Version to release, without the leading v (e.g. 1.2.3)
-        required: true
-        type: string
+  push:
+    tags:
+      - 'v*'
 
 permissions:
   contents: write
@@ -16,23 +13,11 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    env:
-      VERSION: ${{ inputs.version }}
     steps:
       - name: '[Setup] | Checkout'
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           fetch-depth: 0
-
-      - name: '[Setup] | Tag the release and build from it'
-        shell: bash -euo pipefail {0}
-        # Create + push the tag, then build from the tag rather than the branch.
-        # `git tag` may already exist on a re-run (fetched above); the push is a
-        # no-op at the same commit and is rejected if it would move the tag.
-        run: |
-          git tag "v${VERSION}" || true
-          git push origin "v${VERSION}"
-          git checkout --quiet "v${VERSION}"
 
       - name: '[Setup] | Mise'
         uses: jdx/mise-action@dba19683ed58901619b14f395a24841710cb4925 # v4.1.0
@@ -48,12 +33,20 @@ jobs:
         env:
           GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
 
+      # Tap-scoped token for GoReleaser's cross-repo cask push — GITHUB_TOKEN can't.
+      - name: '[Setup] | Mint Homebrew tap token'
+        id: tap-token
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2.2.2
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: truehhart
+          repositories: homebrew-tap
+
       - name: '[Publish] | GoReleaser'
         shell: bash -euo pipefail {0}
-        # The tag exists (pushed above), so GoReleaser builds, signs, and
-        # publishes the release — including the standalone binaries it only
-        # materializes during its own publish step.
         run: goreleaser release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+          HOMEBREW_TAP_TOKEN: ${{ steps.tap-token.outputs.token }}

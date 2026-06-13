@@ -4,7 +4,7 @@ Coding agents like Claude Code often produce standalone HTML — a dashboard, a 
 
 `htmlup` publishes static HTML to a public URL instead. Point it at a file or a directory and it uploads the contents and prints the link — no server to run, no hosting account to set up.
 
-**See it live:** [truehhart.github.io/htmlup](https://truehhart.github.io/htmlup/) — this project's own landing page, published with `htmlup` itself.
+**See it live:** [htmlup.github.com](https://htmlup.github.com) — this project's own landing page, published with `htmlup` itself.
 
 Two backends ship today:
 
@@ -21,7 +21,21 @@ Architecture & command reference: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
 
 > **Status:** working software, early days. The GitHub Pages and S3 publish flows and `github setup` are implemented; expect rough edges and an evolving feature set.
 
+## Install
+
+[Homebrew](https://brew.sh) (macOS and Linux):
+
+```sh
+brew install truehhart/tap/htmlup
+```
+
+Otherwise grab a prebuilt binary or `.tar.gz` for your platform from the
+[releases page](https://github.com/truehhart/htmlup/releases) (see
+[Verifying releases](#verifying-releases)), or build from source below.
+
 ## Getting started
+
+> Building from source — for using the released CLI, see [Install](#install).
 
 Prerequisite: [mise](https://mise.jdx.dev) installed.
 
