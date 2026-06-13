@@ -18,6 +18,9 @@
 #   GH_TOKEN          token with contents:write (the workflow's GITHUB_TOKEN)
 #   GITHUB_REPOSITORY owner/name (set automatically on GitHub Actions)
 set -euo pipefail
+# Disable globbing: EXCLUDE_PATTERNS is split into words and matched by `case`,
+# so the shell must not pathname-expand the globs when iterating them.
+set -f
 
 : "${TTL_DAYS:?TTL_DAYS is required}"
 : "${BRANCH:?BRANCH is required}"

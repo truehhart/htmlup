@@ -138,7 +138,11 @@ func (p *Provider) publish(ctx context.Context, t provider.Target) (provider.Res
 		fmt.Fprintf(os.Stderr, "commit: %s\n", newCommit.GetSHA())
 	}
 
-	p.ensurePages(ctx, client, owner, repoName)
+	// Best-effort for publish: the upload already succeeded, so a Pages-enable
+	// hiccup is a warning, not a failure.
+	if err := p.ensurePages(ctx, client, owner, repoName); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: %v\n", err)
+	}
 
 	if t.Verbose {
 		fmt.Fprintf(os.Stderr, "published %d files to %s\n", len(entries), url)
@@ -168,21 +172,28 @@ func (p *Provider) pagesURL(owner, repo string) string {
 	return u
 }
 
-func (p *Provider) ensurePages(ctx context.Context, client *github.Client, owner, repo string) {
+// ensurePages enables GitHub Pages (branch source, path /) unless it is already
+// on. Only a 404 from GetPagesInfo means "not enabled yet"; any other error is
+// surfaced rather than masked as "not enabled".
+func (p *Provider) ensurePages(ctx context.Context, client *github.Client, owner, repo string) error {
 	_, _, err := client.Repositories.GetPagesInfo(ctx, owner, repo)
 	if err == nil {
-		return
+		return nil // already enabled
 	}
-	_, _, err = client.Repositories.EnablePages(ctx, owner, repo, &github.Pages{
+	var ghErr *github.ErrorResponse
+	if !errors.As(err, &ghErr) || ghErr.Response.StatusCode != 404 {
+		return fmt.Errorf("checking GitHub Pages status: %w", err)
+	}
+	if _, _, err := client.Repositories.EnablePages(ctx, owner, repo, &github.Pages{
 		BuildType: github.Ptr("legacy"),
 		Source: &github.PagesSource{
 			Branch: github.Ptr(p.branch),
 			Path:   github.Ptr("/"),
 		},
-	})
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "warning: could not enable GitHub Pages: %v\n", err)
+	}); err != nil {
+		return fmt.Errorf("enabling GitHub Pages: %w", err)
 	}
+	return nil
 }
 
 // pushCommit creates blobs for every entry, builds a tree on top of the
@@ -237,12 +248,14 @@ func pushCommit(
 
 	var baseTree string
 	var parents []*github.Commit
+	var baseCommit *github.Commit
 	if branchExists {
 		commitSHA := ref.Object.GetSHA()
 		commit, _, err := client.Git.GetCommit(ctx, owner, repo, commitSHA)
 		if err != nil {
 			return nil, fmt.Errorf("getting commit %s: %w", commitSHA, err)
 		}
+		baseCommit = commit
 		baseTree = commit.Tree.GetSHA()
 		parents = []*github.Commit{{SHA: github.Ptr(commitSHA)}}
 	}
@@ -250,6 +263,15 @@ func pushCommit(
 	tree, _, err := client.Git.CreateTree(ctx, owner, repo, baseTree, treeEntries)
 	if err != nil {
 		return nil, fmt.Errorf("creating tree: %w", err)
+	}
+
+	// Nothing changed — skip the commit so we don't push an empty commit and
+	// needlessly re-trigger a Pages build.
+	if branchExists && tree.GetSHA() == baseTree {
+		if verbose {
+			fmt.Fprintf(os.Stderr, "no changes on %s; skipping commit\n", branch)
+		}
+		return baseCommit, nil
 	}
 
 	newCommit, _, err := client.Git.CreateCommit(ctx, owner, repo, &github.Commit{
