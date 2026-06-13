@@ -1,0 +1,18 @@
+{
+  "name": "htmlupclaude",
+  "owner": {
+    "name": "Dmitrii Parshenkov",
+    "url": "https://github.com/truehhart"
+  },
+  "metadata": {
+    "description": "Claude Code plugins for htmlup — publish HTML pages to GitHub Pages or S3.",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "htmlup",
+      "source": "./plugins/htmlup",
+      "description": "Drive the htmlup CLI to publish HTML pages publicly via GitHub Pages or S3."
+    }
+  ]
+}
