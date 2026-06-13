@@ -47,7 +47,7 @@ func (p *Provider) setupCmd() *cobra.Command {
 	cmd.Flags().StringVar(&p.branch, "branch", "gh-pages", "Pages branch to bootstrap")
 	cmd.Flags().IntVar(&p.ttlDays, "ttl-days", 30, "delete published files older than this many days")
 	cmd.Flags().StringVar(&p.cron, "cron", "0 3 * * 0", "cron schedule for the cleanup workflow")
-	cmd.Flags().StringSliceVar(&p.exclude, "exclude", nil, "additional glob patterns the cleanup never deletes (repeatable or comma-separated)")
+	cmd.Flags().StringSliceVar(&p.exclude, "exclude", nil, "extra top-level entries the cleanup never deletes; globs match the entry name, so a directory is its bare name, e.g. 'drafts' not 'drafts/*' (repeatable or comma-separated)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show what would be done without writing")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "per-step progress and SDK detail")
 	return cmd
@@ -78,7 +78,27 @@ func (p *Provider) setup(ctx context.Context, dryRun, verbose bool) (provider.Re
 		return provider.Result{URL: url}, nil
 	}
 
-	// 1. Publish the hello-world landing page to the Pages branch.
+	// 1. Install the cleanup workflow on the default branch FIRST. It is the
+	// step most likely to fail — it needs the token's `workflow` scope and an
+	// unprotected default branch — so doing it before any other mutation avoids
+	// leaving the repo half-bootstrapped.
+	defaultBranch, err := p.defaultBranch(ctx, client, owner, repoName)
+	if err != nil {
+		return provider.Result{}, err
+	}
+	workflowCommit, err := pushCommit(ctx, client, owner, repoName, defaultBranch,
+		"install htmlup cleanup workflow via htmlup",
+		[]fileEntry{{path: cleanupWorkflowPath, content: []byte(workflow)}}, verbose)
+	if err != nil {
+		return provider.Result{}, fmt.Errorf("installing cleanup workflow on %s: %w\n"+
+			"hint: the token needs the 'workflow' scope and the default branch (%s) must allow direct pushes",
+			p.repo, err, defaultBranch)
+	}
+	if verbose {
+		fmt.Fprintf(os.Stderr, "workflow commit: %s (branch %s)\n", workflowCommit.GetSHA(), defaultBranch)
+	}
+
+	// 2. Publish the hello-world landing page to the Pages branch (creates it).
 	landingCommit, err := pushCommit(ctx, client, owner, repoName, p.branch,
 		"bootstrap landing page via htmlup",
 		[]fileEntry{{path: "index.html", content: []byte(landing)}}, verbose)
@@ -89,22 +109,11 @@ func (p *Provider) setup(ctx context.Context, dryRun, verbose bool) (provider.Re
 		fmt.Fprintf(os.Stderr, "landing commit: %s\n", landingCommit.GetSHA())
 	}
 
-	// 2. Enable Pages on the bootstrapped branch.
-	p.ensurePages(ctx, client, owner, repoName)
-
-	// 3. Install the cron cleanup workflow on the repo's default branch.
-	defaultBranch, err := p.defaultBranch(ctx, client, owner, repoName)
-	if err != nil {
-		return provider.Result{}, err
-	}
-	workflowCommit, err := pushCommit(ctx, client, owner, repoName, defaultBranch,
-		"install htmlup cleanup workflow via htmlup",
-		[]fileEntry{{path: cleanupWorkflowPath, content: []byte(workflow)}}, verbose)
-	if err != nil {
+	// 3. Enable Pages on the bootstrapped branch (now that it exists).
+	if err := p.ensurePages(ctx, client, owner, repoName); err != nil {
 		return provider.Result{}, err
 	}
 	if verbose {
-		fmt.Fprintf(os.Stderr, "workflow commit: %s (branch %s)\n", workflowCommit.GetSHA(), defaultBranch)
 		fmt.Fprintf(os.Stderr, "bootstrapped %s -> %s\n", p.repo, url)
 	}
 
