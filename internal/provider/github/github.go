@@ -174,10 +174,15 @@ func (p *Provider) pagesURL(owner, repo string) string {
 
 // ensurePages enables GitHub Pages (branch source, path /) unless it is already
 // on. Only a 404 from GetPagesInfo means "not enabled yet"; any other error is
-// surfaced rather than masked as "not enabled".
+// surfaced rather than masked as "not enabled". When Pages is already on but
+// serving a different source than what we just published to, it warns loudly —
+// the upload would otherwise silently never appear.
 func (p *Provider) ensurePages(ctx context.Context, client *github.Client, owner, repo string) error {
-	_, _, err := client.Repositories.GetPagesInfo(ctx, owner, repo)
+	info, _, err := client.Repositories.GetPagesInfo(ctx, owner, repo)
 	if err == nil {
+		if w := pagesMismatchWarning(info.GetBuildType(), info.GetSource().GetBranch(), info.GetSource().GetPath(), p.branch); w != "" {
+			fmt.Fprintf(os.Stderr, "warning: %s\n", w)
+		}
 		return nil // already enabled
 	}
 	var ghErr *github.ErrorResponse
@@ -194,6 +199,25 @@ func (p *Provider) ensurePages(ctx context.Context, client *github.Client, owner
 		return fmt.Errorf("enabling GitHub Pages: %w", err)
 	}
 	return nil
+}
+
+// pagesMismatchWarning returns a message when GitHub Pages is configured to
+// serve something other than the branch we just published to, or "" if it
+// already matches. It does not change the user's Pages config — repointing
+// could clobber an intentional setup — it just stops the silent no-show.
+func pagesMismatchWarning(buildType, srcBranch, srcPath, targetBranch string) string {
+	switch {
+	case buildType == "workflow":
+		return fmt.Sprintf("GitHub Pages builds from a GitHub Actions workflow, not a branch — "+
+			"files published to %q will not appear until you set the Pages source to that branch "+
+			"(repo Settings → Pages)", targetBranch)
+	case srcBranch != "" && srcBranch != targetBranch:
+		return fmt.Sprintf("GitHub Pages is serving %s (%s), not the %q branch this published to — "+
+			"the upload will not appear until you repoint Pages (repo Settings → Pages)",
+			srcBranch, srcPath, targetBranch)
+	default:
+		return ""
+	}
 }
 
 // pushCommit creates blobs for every entry, builds a tree on top of the
