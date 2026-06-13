@@ -135,19 +135,23 @@ func (p *Provider) publish(ctx context.Context, t provider.Target, autoDetect bo
 	// file in the target — publish never writes one; that's `github setup`),
 	// then the auto-detected Pages URL, then the github.io default. pushCommit
 	// merges onto the branch's tree, so any existing CNAME is left untouched.
-	url := p.pagesURL(owner, repoName)
+	// The site root, then the URL of the page to hand back (the file itself for
+	// a single non-index page).
+	siteURL := p.pagesURL(owner, repoName)
 	if autoURL != "" {
-		url = autoURL
+		siteURL = autoURL
 	}
 	if domain := readCNAME(ctx, client, owner, repoName, p.branch, p.dir); domain != "" {
-		url = "https://" + domain + "/"
+		siteURL = "https://" + domain + "/"
 	}
+	url := landingURL(siteURL, entries, p.dir)
 
 	if t.DryRun {
+		fmt.Fprintf(os.Stderr, "dry run — would publish %s to %s (branch %s%s):\n", entrySummary(entries, p.dir), p.repo, p.branch, dirNote(p.dir))
 		for _, e := range entries {
-			fmt.Fprintf(os.Stderr, "would upload: %s\n", e.path)
+			fmt.Fprintf(os.Stderr, "  %s\n", servedPath(e.path, p.dir))
 		}
-		fmt.Fprintf(os.Stderr, "target: %s branch %s dir %q (%d files)\n", p.repo, p.branch, p.dir, len(entries))
+		fmt.Fprintf(os.Stderr, "→ %s\n", url)
 		return provider.Result{URL: url}, nil
 	}
 
@@ -155,7 +159,6 @@ func (p *Provider) publish(ctx context.Context, t provider.Target, autoDetect bo
 	if err != nil {
 		return provider.Result{}, err
 	}
-
 	if t.Verbose {
 		fmt.Fprintf(os.Stderr, "commit: %s\n", newCommit.GetSHA())
 	}
@@ -166,10 +169,8 @@ func (p *Provider) publish(ctx context.Context, t provider.Target, autoDetect bo
 		fmt.Fprintf(os.Stderr, "warning: %v\n", err)
 	}
 
-	if t.Verbose {
-		fmt.Fprintf(os.Stderr, "published %d files to %s\n", len(entries), url)
-	}
-
+	// Friendly summary on stderr; the bare URL goes to stdout for piping.
+	fmt.Fprintf(os.Stderr, "✓ published %s to %s (branch %s%s)\n", entrySummary(entries, p.dir), p.repo, p.branch, dirNote(p.dir))
 	return provider.Result{URL: url}, nil
 }
 
@@ -296,6 +297,46 @@ func publishMessage(entries []fileEntry) string {
 		return fmt.Sprintf("publish %s via htmlup", entries[0].path)
 	}
 	return fmt.Sprintf("publish %d files via htmlup", len(entries))
+}
+
+// servedPath maps an uploaded entry path to the path it's served at: the Pages
+// source dir is the served root, so it's stripped.
+func servedPath(p, dir string) string {
+	if dir != "" {
+		return strings.TrimPrefix(p, dir+"/")
+	}
+	return p
+}
+
+// landingURL returns the URL to hand back: the site root when an index.html was
+// published (served at the root), the file's own URL for a single non-index
+// file, else the site root. base is expected to end with "/".
+func landingURL(base string, entries []fileEntry, dir string) string {
+	for _, e := range entries {
+		if servedPath(e.path, dir) == "index.html" {
+			return base
+		}
+	}
+	if len(entries) == 1 {
+		return base + servedPath(entries[0].path, dir)
+	}
+	return base
+}
+
+// entrySummary describes the published set for human-readable output.
+func entrySummary(entries []fileEntry, dir string) string {
+	if len(entries) == 1 {
+		return servedPath(entries[0].path, dir)
+	}
+	return fmt.Sprintf("%d files", len(entries))
+}
+
+// dirNote renders the source subdirectory for human output (", /docs" or "").
+func dirNote(dir string) string {
+	if dir == "" {
+		return ""
+	}
+	return ", /" + dir
 }
 
 // pushCommit creates blobs for every entry, builds a tree on top of the
