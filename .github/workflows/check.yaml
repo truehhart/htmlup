@@ -42,7 +42,7 @@ jobs:
 
       - name: '[Lint] | HTML'
         shell: bash -euo pipefail {0}
-        run: htmlhint docs/site internal/provider/github/templates
+        run: htmlhint docs internal/provider/github/templates
 
       - name: '[Lint] | Shell'
         shell: bash -euo pipefail {0}
