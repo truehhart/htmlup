@@ -61,7 +61,7 @@ func (p *Provider) publishCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Println(result.URL)
+			result.PrintURLs()
 			return nil
 		},
 	}
@@ -86,7 +86,7 @@ func (p *Provider) publish(ctx context.Context, t provider.Target) (provider.Res
 
 	client := s3svc.NewFromConfig(cfg)
 
-	var uploaded int
+	var urls []string
 	err = fs.WalkDir(t.Files, ".", func(filePath string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -99,10 +99,11 @@ func (p *Provider) publish(ctx context.Context, t provider.Target) (provider.Res
 		if p.prefix != "" {
 			key = path.Join(p.prefix, filePath)
 		}
+		objURL := s3ObjectURL(p.bucket, cfg.Region, key)
 
 		if t.DryRun {
 			fmt.Fprintf(os.Stderr, "would upload: s3://%s/%s\n", p.bucket, key)
-			uploaded++
+			urls = append(urls, objURL)
 			return nil
 		}
 
@@ -137,24 +138,22 @@ func (p *Provider) publish(ctx context.Context, t provider.Target) (provider.Res
 			return fmt.Errorf("uploading %s: %w", key, err)
 		}
 
-		uploaded++
+		urls = append(urls, objURL)
 		return nil
 	})
 	if err != nil {
 		return provider.Result{}, err
 	}
 
-	if uploaded == 0 {
+	if len(urls) == 0 {
 		return provider.Result{}, fmt.Errorf("no files to publish")
 	}
 
-	url := s3URL(p.bucket, cfg.Region, p.prefix)
-
 	if t.Verbose {
-		fmt.Fprintf(os.Stderr, "uploaded %d files to %s\n", uploaded, url)
+		fmt.Fprintf(os.Stderr, "uploaded %d files to %s\n", len(urls), s3URL(p.bucket, cfg.Region, p.prefix))
 	}
 
-	return provider.Result{URL: url}, nil
+	return provider.Result{URLs: urls}, nil
 }
 
 func s3URL(bucket, region, prefix string) string {
@@ -166,4 +165,12 @@ func s3URL(bucket, region, prefix string) string {
 		u += prefix + "/"
 	}
 	return u
+}
+
+// s3ObjectURL is the virtual-hosted–style URL for a single uploaded object.
+func s3ObjectURL(bucket, region, key string) string {
+	if region == "" {
+		region = "us-east-1"
+	}
+	return fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", bucket, region, key)
 }

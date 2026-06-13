@@ -76,7 +76,7 @@ func (p *Provider) publishCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Println(result.URL)
+			result.PrintURLs()
 			return nil
 		},
 	}
@@ -144,15 +144,14 @@ func (p *Provider) publish(ctx context.Context, t provider.Target, autoDetect bo
 	if domain := readCNAME(ctx, client, owner, repoName, p.branch, p.dir); domain != "" {
 		siteURL = "https://" + domain + "/"
 	}
-	url := landingURL(siteURL, entries, p.dir)
+	urls := publishedURLs(siteURL, entries, p.dir)
 
 	if t.DryRun {
 		fmt.Fprintf(os.Stderr, "dry run — would publish %s to %s (branch %s%s):\n", entrySummary(entries, p.dir), p.repo, p.branch, dirNote(p.dir))
-		for _, e := range entries {
-			fmt.Fprintf(os.Stderr, "  %s\n", servedPath(e.path, p.dir))
+		for _, u := range urls {
+			fmt.Fprintf(os.Stderr, "  → %s\n", u)
 		}
-		fmt.Fprintf(os.Stderr, "→ %s\n", url)
-		return provider.Result{URL: url}, nil
+		return provider.Result{URLs: urls}, nil
 	}
 
 	newCommit, err := pushCommit(ctx, client, owner, repoName, p.branch, publishMessage(entries), entries, t.Verbose)
@@ -169,9 +168,9 @@ func (p *Provider) publish(ctx context.Context, t provider.Target, autoDetect bo
 		fmt.Fprintf(os.Stderr, "warning: %v\n", err)
 	}
 
-	// Friendly summary on stderr; the bare URL goes to stdout for piping.
+	// Friendly summary on stderr; the bare per-file URLs go to stdout for piping.
 	fmt.Fprintf(os.Stderr, "✓ published %s to %s (branch %s%s)\n", entrySummary(entries, p.dir), p.repo, p.branch, dirNote(p.dir))
-	return provider.Result{URL: url}, nil
+	return provider.Result{URLs: urls}, nil
 }
 
 func (p *Provider) ownerRepo() (string, string) {
@@ -308,19 +307,30 @@ func servedPath(p, dir string) string {
 	return p
 }
 
-// landingURL returns the URL to hand back: the site root when an index.html was
-// published (served at the root), the file's own URL for a single non-index
-// file, else the site root. base is expected to end with "/".
-func landingURL(base string, entries []fileEntry, dir string) string {
-	for _, e := range entries {
-		if servedPath(e.path, dir) == "index.html" {
-			return base
-		}
+// publishedURLs returns the served URL of every published file, in upload
+// order, so a multi-file publish hands back a usable link per file instead of a
+// bare site root.
+func publishedURLs(base string, entries []fileEntry, dir string) []string {
+	urls := make([]string, len(entries))
+	for i, e := range entries {
+		urls[i] = servedURL(base, e.path, dir)
 	}
-	if len(entries) == 1 {
-		return base + servedPath(entries[0].path, dir)
+	return urls
+}
+
+// servedURL is the URL an uploaded entry is served at. An index.html collapses
+// to its directory root (where Pages serves it) so it reads as a clean link.
+// base is expected to end with "/".
+func servedURL(base, entryPath, dir string) string {
+	sp := servedPath(entryPath, dir)
+	switch {
+	case sp == "index.html":
+		return base
+	case strings.HasSuffix(sp, "/index.html"):
+		return base + strings.TrimSuffix(sp, "index.html")
+	default:
+		return base + sp
 	}
-	return base
 }
 
 // entrySummary describes the published set for human-readable output.

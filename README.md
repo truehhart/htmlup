@@ -2,9 +2,9 @@
 
 Coding agents like Claude Code often produce standalone HTML — a dashboard, a report, a quick page. Sharing that as a file is awkward: you have to send it around, and links and assets break once it leaves your machine.
 
-`htmlup` publishes static HTML to a public URL instead. Point it at a file or a directory and it uploads the contents and prints the link — no server to run, no hosting account to set up.
+`htmlup` publishes static HTML to a public URL instead. Point it at a file or a directory and it uploads the contents and prints a link per file — no server to run, no hosting account to set up.
 
-**See it live:** [htmlup.github.com](https://htmlup.github.com) — this project's own landing page, published with `htmlup` itself.
+**See it live:** [htmlup.truehhart.com](https://htmlup.truehhart.com) — this project's own landing page, published with `htmlup` itself.
 
 Two backends ship today:
 
@@ -60,7 +60,7 @@ htmlup github publish ./site --repo owner/repo [--no-auto --branch gh-pages --di
 htmlup s3 publish ./site --bucket my-bucket [--prefix path/] [--region us-east-1]
 ```
 
-Each `publish` command also accepts `--dry-run` (enumerate what would be uploaded and the resulting URL, write nothing) and `-v/--verbose` (per-file progress). On success the command prints the public URL.
+Each `publish` command also accepts `--dry-run` (enumerate what would be uploaded and the resulting URLs, write nothing) and `-v/--verbose` (per-file progress). On success the command prints a public URL per file, one per line.
 
 ### GitHub Pages cleanup
 

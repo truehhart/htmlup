@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -168,49 +169,56 @@ func TestHelloWorldHTML(t *testing.T) {
 	}
 }
 
-func TestLandingURL(t *testing.T) {
+func TestPublishedURLs(t *testing.T) {
 	const base = "https://truehhart.github.io/random-html-pages/"
 	tests := []struct {
 		name    string
 		entries []fileEntry
 		dir     string
-		want    string
+		want    []string
 	}{
 		{
 			"single non-index file links to the file",
 			[]fileEntry{{path: "austin-powers-diagram.html"}},
 			"",
-			base + "austin-powers-diagram.html",
+			[]string{base + "austin-powers-diagram.html"},
 		},
 		{
 			"single file under a source dir strips the dir",
 			[]fileEntry{{path: "docs/austin-powers-diagram.html"}},
 			"docs",
-			base + "austin-powers-diagram.html",
+			[]string{base + "austin-powers-diagram.html"},
 		},
 		{
 			"index.html links to the root",
 			[]fileEntry{{path: "index.html"}},
 			"",
-			base,
+			[]string{base},
 		},
 		{
-			"directory with index.html links to the root",
+			"directory with index.html lists the root then each asset",
 			[]fileEntry{{path: "index.html"}, {path: "style.css"}},
 			"",
-			base,
+			[]string{base, base + "style.css"},
 		},
 		{
-			"multiple files without index link to the root",
-			[]fileEntry{{path: "a.html"}, {path: "b.html"}},
+			"multiple files without index each get their own URL",
+			[]fileEntry{{path: "q3-report.html"}, {path: "security-audit.html"}},
 			"",
-			base,
+			[]string{base + "q3-report.html", base + "security-audit.html"},
+		},
+		{
+			"nested index.html collapses to its directory",
+			[]fileEntry{{path: "reports/index.html"}},
+			"",
+			[]string{base + "reports/"},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := landingURL(base, tt.entries, tt.dir); got != tt.want {
-				t.Errorf("landingURL() = %q, want %q", got, tt.want)
+			got := publishedURLs(base, tt.entries, tt.dir)
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("publishedURLs() = %v, want %v", got, tt.want)
 			}
 		})
 	}
