@@ -39,6 +39,10 @@ jobs:
         shell: bash -euo pipefail {0}
         run: golangci-lint run
 
+      - name: '[Lint] | HTML'
+        shell: bash -euo pipefail {0}
+        run: htmlhint docs/site internal/provider/github/templates
+
   test:
     runs-on: ubuntu-latest
     steps:
