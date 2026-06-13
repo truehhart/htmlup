@@ -1,0 +1,822 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>htmlup — publish HTML to the public web in one command</title>
+    <meta
+      name="description"
+      content="htmlup is a small Go CLI that uploads HTML and hands you a public URL. Two backends: GitHub Pages and S3/CloudFront. It uploads and exits — no servers, no lifecycle, no stored credentials."
+    />
+    <meta name="color-scheme" content="dark" />
+
+    <!-- Open Graph (text-only; no external assets) -->
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="htmlup" />
+    <meta
+      property="og:description"
+      content="Publish HTML to the public web in one command."
+    />
+    <meta property="og:url" content="https://truehhart.github.io/htmlup/" />
+
+    <style>
+      :root {
+        --bg: #0a0c10;
+        --bg-soft: #11141b;
+        --panel: #0f1218;
+        --border: #1e2430;
+        --border-hi: #2b3342;
+        --fg: #d7dde7;
+        --fg-dim: #8b94a3;
+        --fg-faint: #5b6373;
+        --accent: #7ee787;
+        --accent-2: #58a6ff;
+        --accent-3: #d2a8ff;
+        --amber: #f0b429;
+        --radius: 12px;
+        --mono:
+          ui-monospace, "SF Mono", "JetBrains Mono", "Fira Code", Menlo,
+          Consolas, monospace;
+        --sans:
+          ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+          Helvetica, Arial, sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        margin: 0;
+        font-family: var(--sans);
+        color: var(--fg);
+        background:
+          radial-gradient(
+            900px 500px at 80% -10%,
+            rgba(88, 166, 255, 0.1),
+            transparent 60%
+          ),
+          radial-gradient(
+            700px 400px at 0% 0%,
+            rgba(126, 231, 135, 0.08),
+            transparent 55%
+          ),
+          var(--bg);
+        line-height: 1.6;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      a {
+        color: var(--accent-2);
+        text-decoration: none;
+      }
+      a:hover {
+        text-decoration: underline;
+      }
+
+      .wrap {
+        max-width: 920px;
+        margin: 0 auto;
+        padding: 0 24px;
+      }
+
+      /* ---- top bar ---- */
+      header.bar {
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        backdrop-filter: blur(10px);
+        background: rgba(10, 12, 16, 0.72);
+        border-bottom: 1px solid var(--border);
+      }
+      .bar-inner {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        max-width: 920px;
+        margin: 0 auto;
+        padding: 12px 24px;
+      }
+      .brand {
+        font-family: var(--mono);
+        font-weight: 700;
+        font-size: 1rem;
+        letter-spacing: -0.02em;
+      }
+      .brand .prompt {
+        color: var(--accent);
+      }
+      .bar-links {
+        display: flex;
+        gap: 18px;
+        font-size: 0.9rem;
+      }
+      .bar-links a {
+        color: var(--fg-dim);
+      }
+      .bar-links a:hover {
+        color: var(--fg);
+        text-decoration: none;
+      }
+
+      /* ---- hero ---- */
+      .hero {
+        padding: 72px 0 40px;
+      }
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        font-family: var(--mono);
+        font-size: 0.78rem;
+        color: var(--fg-dim);
+        border: 1px solid var(--border-hi);
+        border-radius: 999px;
+        padding: 5px 12px;
+        margin-bottom: 26px;
+      }
+      .badge .dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--accent);
+        box-shadow: 0 0 8px var(--accent);
+      }
+      h1 {
+        font-size: clamp(2.6rem, 7vw, 4.4rem);
+        line-height: 1.02;
+        margin: 0 0 18px;
+        letter-spacing: -0.04em;
+        font-weight: 800;
+      }
+      h1 .up {
+        background: linear-gradient(
+          120deg,
+          var(--accent),
+          var(--accent-2) 60%,
+          var(--accent-3)
+        );
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+      }
+      .pitch {
+        font-size: clamp(1.1rem, 2.4vw, 1.4rem);
+        color: var(--fg-dim);
+        max-width: 40ch;
+        margin: 0 0 32px;
+      }
+
+      .cta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-bottom: 36px;
+      }
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        font-family: var(--mono);
+        font-size: 0.92rem;
+        font-weight: 600;
+        padding: 11px 18px;
+        border-radius: 10px;
+        border: 1px solid var(--border-hi);
+        color: var(--fg);
+        background: var(--bg-soft);
+        cursor: pointer;
+        transition: all 0.15s ease;
+      }
+      .btn:hover {
+        text-decoration: none;
+        border-color: var(--accent);
+        transform: translateY(-1px);
+      }
+      .btn.primary {
+        background: var(--accent);
+        color: #05210a;
+        border-color: var(--accent);
+      }
+      .btn.primary:hover {
+        box-shadow: 0 6px 20px rgba(126, 231, 135, 0.25);
+      }
+
+      /* ---- terminal block (hero demo) ---- */
+      .term {
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        background: var(--panel);
+        overflow: hidden;
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+      }
+      .term-head {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        padding: 11px 14px;
+        border-bottom: 1px solid var(--border);
+        background: var(--bg-soft);
+      }
+      .term-head .tdot {
+        width: 11px;
+        height: 11px;
+        border-radius: 50%;
+      }
+      .tdot.r {
+        background: #ff5f56;
+      }
+      .tdot.y {
+        background: #ffbd2e;
+      }
+      .tdot.g {
+        background: #27c93f;
+      }
+      .term-head .ttitle {
+        margin-left: 10px;
+        font-family: var(--mono);
+        font-size: 0.78rem;
+        color: var(--fg-faint);
+      }
+      .term-body {
+        padding: 18px 20px;
+        font-family: var(--mono);
+        font-size: 0.92rem;
+        line-height: 1.8;
+        overflow-x: auto;
+      }
+      .term-body .line {
+        white-space: pre;
+      }
+      .term-body .pmt {
+        color: var(--accent);
+      }
+      .term-body .cmd {
+        color: var(--fg);
+      }
+      .term-body .flag {
+        color: var(--accent-3);
+      }
+      .term-body .out {
+        color: var(--fg-dim);
+      }
+      .term-body .url {
+        color: var(--accent-2);
+      }
+      .cursor {
+        display: inline-block;
+        width: 9px;
+        height: 1.05em;
+        vertical-align: text-bottom;
+        background: var(--accent);
+        margin-left: 2px;
+        animation: blink 1.1s steps(1) infinite;
+      }
+      @keyframes blink {
+        50% {
+          opacity: 0;
+        }
+      }
+
+      /* ---- sections ---- */
+      section {
+        padding: 52px 0;
+        border-top: 1px solid var(--border);
+      }
+      h2 {
+        font-size: 1.7rem;
+        letter-spacing: -0.02em;
+        margin: 0 0 8px;
+      }
+      h2 .hash {
+        color: var(--accent);
+        font-family: var(--mono);
+        font-weight: 700;
+      }
+      .lead {
+        color: var(--fg-dim);
+        margin: 0 0 28px;
+        max-width: 60ch;
+      }
+
+      /* ---- code blocks with copy ---- */
+      .code {
+        position: relative;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--panel);
+        margin: 0 0 18px;
+      }
+      .code pre {
+        margin: 0;
+        padding: 16px 18px;
+        overflow-x: auto;
+        font-family: var(--mono);
+        font-size: 0.88rem;
+        line-height: 1.75;
+        color: var(--fg);
+      }
+      .code .cap {
+        font-family: var(--mono);
+        font-size: 0.74rem;
+        color: var(--fg-faint);
+        padding: 8px 18px;
+        border-bottom: 1px solid var(--border);
+      }
+      .code .flag {
+        color: var(--accent-3);
+      }
+      .code .cmt {
+        color: var(--fg-faint);
+      }
+      .code .kw {
+        color: var(--accent);
+      }
+      .copy {
+        position: absolute;
+        top: 8px;
+        right: 8px;
+        font-family: var(--mono);
+        font-size: 0.72rem;
+        color: var(--fg-dim);
+        background: var(--bg-soft);
+        border: 1px solid var(--border-hi);
+        border-radius: 7px;
+        padding: 5px 10px;
+        cursor: pointer;
+        transition: all 0.15s ease;
+      }
+      .copy:hover {
+        color: var(--fg);
+        border-color: var(--accent);
+      }
+      .copy.done {
+        color: var(--accent);
+        border-color: var(--accent);
+      }
+
+      /* ---- backend cards ---- */
+      .grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 18px;
+      }
+      .card {
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        background: linear-gradient(180deg, var(--bg-soft), var(--panel));
+        padding: 22px;
+        transition:
+          border-color 0.15s ease,
+          transform 0.15s ease;
+      }
+      .card:hover {
+        border-color: var(--border-hi);
+        transform: translateY(-2px);
+      }
+      .card h3 {
+        margin: 0 0 6px;
+        font-size: 1.15rem;
+      }
+      .card h3 .tag {
+        font-family: var(--mono);
+        font-size: 0.72rem;
+        color: var(--accent);
+        border: 1px solid var(--border-hi);
+        border-radius: 6px;
+        padding: 2px 7px;
+        margin-left: 8px;
+        vertical-align: middle;
+      }
+      .card p {
+        color: var(--fg-dim);
+        margin: 0 0 12px;
+        font-size: 0.95rem;
+      }
+      .card code {
+        font-family: var(--mono);
+        font-size: 0.82rem;
+        color: var(--accent-3);
+        background: var(--bg);
+        padding: 1px 5px;
+        border-radius: 5px;
+      }
+
+      /* ---- principle list ---- */
+      .principles {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+      }
+      .pr {
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 18px 20px;
+        background: var(--panel);
+      }
+      .pr .k {
+        font-family: var(--mono);
+        color: var(--accent);
+        font-size: 0.82rem;
+        display: block;
+        margin-bottom: 6px;
+      }
+      .pr p {
+        margin: 0;
+        color: var(--fg-dim);
+        font-size: 0.92rem;
+      }
+
+      /* ---- meta callout ---- */
+      .meta {
+        border: 1px dashed var(--border-hi);
+        border-radius: var(--radius);
+        background: rgba(126, 231, 135, 0.04);
+        padding: 22px 24px;
+        font-size: 1rem;
+      }
+      .meta .k {
+        font-family: var(--mono);
+        color: var(--accent);
+      }
+
+      /* ---- footer ---- */
+      footer {
+        padding: 40px 0 64px;
+        border-top: 1px solid var(--border);
+        color: var(--fg-faint);
+        font-size: 0.88rem;
+      }
+      footer .frow {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 14px;
+        justify-content: space-between;
+        align-items: center;
+      }
+      footer code {
+        font-family: var(--mono);
+        color: var(--fg-dim);
+      }
+
+      @media (max-width: 680px) {
+        .grid,
+        .principles {
+          grid-template-columns: 1fr;
+        }
+        .bar-links {
+          gap: 12px;
+        }
+        .hero {
+          padding: 48px 0 28px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header class="bar">
+      <div class="bar-inner">
+        <span class="brand"><span class="prompt">$ </span>htmlup</span>
+        <nav class="bar-links" aria-label="Primary">
+          <a href="#usage">Usage</a>
+          <a href="#backends">Backends</a>
+          <a href="#auth">Auth</a>
+          <a href="https://github.com/truehhart/htmlup" rel="noopener"
+            >GitHub</a
+          >
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <section class="hero" style="border-top: none">
+        <div class="wrap">
+          <span class="badge"
+            ><span class="dot"></span> Go CLI · GitHub Pages + S3 · MIT</span
+          >
+          <h1>html<span class="up">up</span></h1>
+          <p class="pitch">Publish HTML to the public web in one command.</p>
+
+          <div class="cta">
+            <a class="btn primary" href="#usage">Get started</a>
+            <a
+              class="btn"
+              href="https://github.com/truehhart/htmlup"
+              rel="noopener"
+              >★ Star on GitHub</a
+            >
+          </div>
+
+          <div class="term" aria-hidden="false">
+            <div class="term-head">
+              <span class="tdot r"></span><span class="tdot y"></span
+              ><span class="tdot g"></span>
+              <span class="ttitle">zsh — htmlup</span>
+            </div>
+            <div class="term-body" id="demo">
+              <div class="line" id="typed"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="usage">
+        <div class="wrap">
+          <h2><span class="hash">#</span> Usage</h2>
+          <p class="lead">
+            The shape is always
+            <code>htmlup &lt;provider&gt; publish &lt;path&gt;</code>. Point it
+            at a single <code>.html</code> file or a directory of static assets
+            — directories upload recursively, preserving structure. On success
+            it prints the public URL and exits.
+          </p>
+
+          <div class="code">
+            <div class="cap">GitHub Pages</div>
+            <button class="copy" type="button">copy</button>
+            <pre><span class="cmt"># publish a directory to GitHub Pages</span>
+htmlup github publish ./site <span class="flag">--repo</span> owner/repo
+
+<span class="cmt"># with options: branch, subdir, custom domain</span>
+htmlup github publish ./site <span class="flag">--repo</span> owner/repo \
+  <span class="flag">--branch</span> gh-pages <span class="flag">--dir</span> docs <span class="flag">--cname</span> example.com</pre>
+          </div>
+
+          <div class="code">
+            <div class="cap">S3 (exposed via CloudFront)</div>
+            <button class="copy" type="button">copy</button>
+            <pre><span class="cmt"># upload objects to a bucket</span>
+htmlup s3 publish ./site <span class="flag">--bucket</span> my-bucket
+
+<span class="cmt"># with key prefix and explicit region</span>
+htmlup s3 publish ./site <span class="flag">--bucket</span> my-bucket \
+  <span class="flag">--prefix</span> path/ <span class="flag">--region</span> us-east-1</pre>
+          </div>
+
+          <div class="code">
+            <div class="cap">Global flags (every provider)</div>
+            <button class="copy" type="button">copy</button>
+            <pre><span class="flag">--dry-run</span>      <span class="cmt"># enumerate what would upload + the resulting URL; no writes</span>
+<span class="flag">-v, --verbose</span>  <span class="cmt"># per-file progress and SDK-level detail</span></pre>
+          </div>
+        </div>
+      </section>
+
+      <section id="backends">
+        <div class="wrap">
+          <h2><span class="hash">#</span> Two backends</h2>
+          <p class="lead">
+            Backends are pluggable behind one <code>Provider</code> interface —
+            adding a target is one new package plus registration, no edits to
+            the publish flow.
+          </p>
+          <div class="grid">
+            <div class="card">
+              <h3>GitHub Pages <span class="tag">github</span></h3>
+              <p>
+                Commits your file set to the target branch via the Git Data API,
+                creates the branch if missing, optionally writes a
+                <code>CNAME</code>, and flips Pages on if it isn't already. You
+                get the <code>*.github.io</code> URL back.
+              </p>
+            </div>
+            <div class="card">
+              <h3>S3 <span class="tag">s3</span></h3>
+              <p>
+                One <code>PutObject</code> per file with content-type inferred
+                from the extension. No bucket-policy or website-config mutation
+                — you own public exposure, expected via CloudFront in front of
+                the bucket.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="philosophy">
+        <div class="wrap">
+          <h2><span class="hash">#</span> Stateless by design</h2>
+          <p class="lead">
+            htmlup is single-purpose and boring on purpose. No daemon, no local
+            database, no tracking of what was published.
+          </p>
+          <div class="principles">
+            <div class="pr">
+              <span class="k">uploads &amp; exits</span>
+              <p>
+                No lifecycle management. Every invocation publishes and quits.
+                (GitHub Pages expiry, if you want it, is an opt-in cron Action
+                you copy into the <em>target</em> repo — never run by the CLI.)
+              </p>
+            </div>
+            <div class="pr">
+              <span class="k">never stores credentials</span>
+              <p>
+                htmlup never reads, prompts for, or caches secrets. Each
+                official SDK owns its own credential resolution.
+              </p>
+            </div>
+            <div class="pr">
+              <span class="k">pluggable backends</span>
+              <p>
+                Every target implements one interface and self-registers.
+                Contributors add a backend without touching core code.
+              </p>
+            </div>
+            <div class="pr">
+              <span class="k">thin commands</span>
+              <p>
+                Cobra commands parse flags and delegate; the real logic lives in
+                provider packages and tested pure helpers.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="auth">
+        <div class="wrap">
+          <h2><span class="hash">#</span> Authentication</h2>
+          <p class="lead">
+            Auth is delegated <em>entirely</em> to the official SDKs' standard
+            credential chains. htmlup holds nothing.
+          </p>
+          <div class="code">
+            <div class="cap">GitHub — token resolution order</div>
+            <button class="copy" type="button">copy</button>
+            <pre><span class="cmt"># 1. $GITHUB_TOKEN  → 2. $GH_TOKEN  → 3. token from the gh CLI</span>
+gh auth login   <span class="cmt"># missing token? actionable error points you here</span></pre>
+          </div>
+          <div class="code">
+            <div class="cap">AWS — default credential chain</div>
+            <button class="copy" type="button">copy</button>
+            <pre><span class="cmt"># env vars → ~/.aws/credentials → SSO → role / instance creds</span>
+<span class="cmt"># --region only overrides the resolved region</span></pre>
+          </div>
+        </div>
+      </section>
+
+      <section id="claude">
+        <div class="wrap">
+          <h2><span class="hash">#</span> Also a Claude Code plugin</h2>
+          <p class="lead">
+            This repo doubles as a Claude Code plugin marketplace. It publishes
+            the <strong>htmlup</strong> skill, which teaches Claude how to drive
+            the CLI.
+          </p>
+          <div class="code">
+            <div class="cap">In Claude Code</div>
+            <button class="copy" type="button">copy</button>
+            <pre><span class="kw">/plugin</span> marketplace add truehhart/htmlup
+<span class="kw">/plugin</span> install htmlup@htmlup</pre>
+          </div>
+        </div>
+      </section>
+
+      <section id="meta">
+        <div class="wrap">
+          <div class="meta">
+            <p style="margin: 0">
+              <span class="k">// dogfood</span> &nbsp;This page is
+              <code>docs/site/index.html</code> in the repo — and it was
+              published to the web by <strong>htmlup</strong> itself. Turtles
+              all the way down.
+              <span style="color: var(--fg-faint)"
+                >A page about a tool, served by the tool, about serving
+                pages.</span
+              >
+            </p>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <div class="wrap frow">
+        <span>MIT © Dmitrii Parshenkov</span>
+        <span>
+          <a href="https://github.com/truehhart/htmlup" rel="noopener"
+            >github.com/truehhart/htmlup</a
+          >
+          &nbsp;·&nbsp;
+          <a
+            href="https://github.com/truehhart/htmlup/blob/master/LICENSE"
+            rel="noopener"
+            >LICENSE</a
+          >
+        </span>
+      </div>
+    </footer>
+
+    <script>
+      // --- copy-to-clipboard for code blocks ---
+      document.querySelectorAll(".copy").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          var pre = btn.parentElement.querySelector("pre");
+          var text = pre ? pre.innerText : "";
+          function done() {
+            btn.textContent = "copied";
+            btn.classList.add("done");
+            setTimeout(function () {
+              btn.textContent = "copy";
+              btn.classList.remove("done");
+            }, 1400);
+          }
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text).then(done, function () {});
+          } else {
+            // fallback for non-secure contexts
+            var ta = document.createElement("textarea");
+            ta.value = text;
+            document.body.appendChild(ta);
+            ta.select();
+            try {
+              document.execCommand("copy");
+              done();
+            } catch (e) {}
+            document.body.removeChild(ta);
+          }
+        });
+      });
+
+      // --- typed-command effect in the hero terminal ---
+      (function () {
+        var target = document.getElementById("typed");
+        if (!target) return;
+
+        var steps = [
+          { t: "$ ", cls: "pmt" },
+          { t: "htmlup github publish ./site ", cls: "cmd" },
+          { t: "--repo truehhart/htmlup\n", cls: "flag" },
+          { t: "published 1 file → ", cls: "out", instant: true },
+          {
+            t: "https://truehhart.github.io/htmlup/\n",
+            cls: "url",
+            instant: true,
+          },
+          {
+            t: "✓ live in 0.8s — uploaded and exited.",
+            cls: "out",
+            instant: true,
+          },
+        ];
+
+        var container = target;
+        var prefersReduced =
+          window.matchMedia &&
+          window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+        // Build a static fallback first (also what reduced-motion users see).
+        function renderAll() {
+          container.innerHTML = "";
+          steps.forEach(function (s) {
+            var span = document.createElement("span");
+            span.className = s.cls;
+            span.textContent = s.t;
+            container.appendChild(span);
+          });
+        }
+
+        if (prefersReduced) {
+          renderAll();
+          return;
+        }
+
+        container.innerHTML = "";
+        var cursor = document.createElement("span");
+        cursor.className = "cursor";
+
+        var si = 0;
+        function nextStep() {
+          if (si >= steps.length) {
+            container.appendChild(cursor);
+            return;
+          }
+          var s = steps[si++];
+          var span = document.createElement("span");
+          span.className = s.cls;
+          container.appendChild(span);
+          if (s.instant) {
+            span.textContent = s.t;
+            setTimeout(nextStep, 280);
+            return;
+          }
+          var ci = 0;
+          (function typeChar() {
+            span.textContent = s.t.slice(0, ++ci);
+            if (ci < s.t.length) {
+              setTimeout(typeChar, 26 + Math.random() * 34);
+            } else {
+              setTimeout(nextStep, 120);
+            }
+          })();
+        }
+        setTimeout(nextStep, 450);
+      })();
+    </script>
+  </body>
+</html>
