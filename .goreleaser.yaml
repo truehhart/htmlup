@@ -22,6 +22,37 @@ archives:
     formats: [binary]
     name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
 
+checksum:
+  name_template: "{{ .ProjectName }}_{{ .Version }}_SHA256SUMS"
+  algorithm: sha256
+
+signs:
+  - id: cosign
+    cmd: cosign
+    args:
+      - sign-blob
+      - "--output-signature={{ .Signature }}"
+      - "--output-certificate={{ .Certificate }}"
+      - "--yes"
+      - "{{ .Artifact }}"
+    artifacts: checksum
+    signature: "${artifact}.sig"
+    certificate: "${artifact}.pem"
+
+  - id: gpg
+    cmd: gpg
+    args:
+      - "--batch"
+      - "--pinentry-mode=loopback"
+      - "--passphrase-fd=0"
+      - "--detach-sign"
+      - "--output"
+      - "{{ .Signature }}"
+      - "{{ .Artifact }}"
+    artifacts: checksum
+    signature: "${artifact}.gpgsig"
+    stdin: "{{ .Env.GPG_PASSPHRASE }}"
+
 changelog:
   sort: asc
   filters:
