@@ -168,6 +168,17 @@ func TestHelloWorldHTML(t *testing.T) {
 	}
 }
 
+func TestPublishMessage(t *testing.T) {
+	one := publishMessage([]fileEntry{{path: "docs/index.html"}})
+	if one != "publish docs/index.html via htmlup" {
+		t.Errorf("single-file message = %q", one)
+	}
+	many := publishMessage([]fileEntry{{path: "a.html"}, {path: "b.html"}, {path: "c.html"}})
+	if many != "publish 3 files via htmlup" {
+		t.Errorf("multi-file message = %q", many)
+	}
+}
+
 func TestPagesMismatchWarning(t *testing.T) {
 	tests := []struct {
 		name                          string

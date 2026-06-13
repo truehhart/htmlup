@@ -129,7 +129,7 @@ func (p *Provider) publish(ctx context.Context, t provider.Target) (provider.Res
 		return provider.Result{URL: url}, nil
 	}
 
-	newCommit, err := pushCommit(ctx, client, owner, repoName, p.branch, "publish via htmlup", entries, t.Verbose)
+	newCommit, err := pushCommit(ctx, client, owner, repoName, p.branch, publishMessage(entries), entries, t.Verbose)
 	if err != nil {
 		return provider.Result{}, err
 	}
@@ -218,6 +218,15 @@ func pagesMismatchWarning(buildType, srcBranch, srcPath, targetBranch string) st
 	default:
 		return ""
 	}
+}
+
+// publishMessage builds the commit message for a publish, naming the file when
+// it's a single one (the common case) and falling back to a count otherwise.
+func publishMessage(entries []fileEntry) string {
+	if len(entries) == 1 {
+		return fmt.Sprintf("publish %s via htmlup", entries[0].path)
+	}
+	return fmt.Sprintf("publish %d files via htmlup", len(entries))
 }
 
 // pushCommit creates blobs for every entry, builds a tree on top of the
