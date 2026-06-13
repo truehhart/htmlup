@@ -88,7 +88,7 @@ The publish path itself never deletes anything. For users who want pages to expi
 2. enables GitHub Pages (branch source, path `/`), and
 3. commits `.github/workflows/htmlup-cleanup.yaml` to the target repo's **default branch**.
 
-The workflow runs on `--cron` (default `0 3 * * 0`, weekly Sun 03:00 UTC) plus `workflow_dispatch`, holds `contents: write`, checks out the Pages branch, and deletes top-level entries whose last commit is older than `--ttl-days` (default 30). It never removes `index.html`, `CNAME`, `.nojekyll`, or `.github`; `--exclude` (repeatable / comma-separated glob patterns) adds more entries to that protected list. The CLI commits the workflow once and exits; all deletion happens later, on schedule, inside the target repo — the publish path remains stateless and lifecycle-free.
+The workflow runs on `--cron` (default `0 3 * * 0`, weekly Sun 03:00 UTC) plus `workflow_dispatch`, holds `contents: write`, checks out the Pages branch, and deletes top-level entries whose last commit is older than `--ttl-days` (default 30). It never removes `index.html`, `CNAME`, `.nojekyll`, or `.github`; `--exclude` (repeatable / comma-separated glob patterns) adds more entries to that protected list. The removals are recorded as a **GitHub-signed commit** created through the API (`createCommitOnBranch`) using the workflow token — so the commit shows as Verified and no GPG keys live in the target repo. The CLI commits the workflow once and exits; all deletion happens later, on schedule, inside the target repo — the publish path remains stateless and lifecycle-free.
 
 ## 6. S3 exposure
 
@@ -96,4 +96,4 @@ The MVP only uploads objects. Public exposure is the operator's responsibility, 
 
 ## 7. Distribution
 
-GoReleaser produces static binaries for `linux`/`darwin` × `amd64`/`arm64` (no Windows). Tag-triggered GitHub Actions cut releases and publish artifacts. CI is wired by a separate agent; this pass only records the intent.
+GoReleaser produces static binaries for `linux`/`darwin` × `amd64`/`arm64` (no Windows). Releases are cut by the **manually-triggered `release.yaml`** workflow: it takes a `version` input (without the leading `v`), validates it, runs the check suite, then GoReleaser builds + signs the archives and `SHA256SUMS` (cosign keyless + GPG) while `softprops/action-gh-release` creates the `v<version>` tag, generates release notes, and uploads the signed artifacts (updating an existing release gracefully).
