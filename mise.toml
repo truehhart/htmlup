@@ -23,7 +23,7 @@ run = "golangci-lint run"
 
 [tasks.lint-html]
 description = "Lint static HTML with htmlhint"
-run = "htmlhint docs/site internal/provider/github/templates"
+run = "htmlhint docs internal/provider/github/templates"
 
 [tasks.lint-sh]
 description = "Lint shell scripts with shellcheck"
