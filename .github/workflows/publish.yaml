@@ -1,10 +1,13 @@
 name: Publish
+run-name: Publish v${{ inputs.version }}
 
-# Reusable workflow: builds and publishes release artifacts with GoReleaser
-# (signed with cosign keyless + GPG). Called by release.yaml after checks pass;
-# it does not run checks itself.
 on:
   workflow_call:
+    inputs:
+      version:
+        description: Version to release, without the leading v (e.g. 1.2.3)
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -13,29 +16,45 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ inputs.version }}
     steps:
-      - name: "[Setup] | Checkout"
+      - name: '[Setup] | Checkout'
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
-          fetch-depth: 1
+          fetch-depth: 0
 
-      - name: "[Setup] | Mise"
+      - name: '[Setup] | Mise'
         uses: jdx/mise-action@dba19683ed58901619b14f395a24841710cb4925 # v4.1.0
         with:
           install: true
 
-      - name: "[Setup] | Cosign"
+      - name: '[Setup] | Cosign'
         uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
 
-      - name: "[Setup] | Import GPG key"
+      - name: '[Setup] | Import GPG key'
         shell: bash -euo pipefail {0}
         run: echo "${GPG_PRIVATE_KEY}" | gpg --batch --import
         env:
           GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
 
-      - name: "[Publish] | GoReleaser"
+      - name: '[Build] | GoReleaser (build + sign, no publish)'
         shell: bash -euo pipefail {0}
-        run: goreleaser release --clean
+        # Tag HEAD locally so GoReleaser stamps the right version; the release
+        # action creates the real tag on the remote.
+        run: |
+          git tag -f "v${VERSION}"
+          goreleaser release --clean --skip=publish,announce
+        env:
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+
+      - name: '[Publish] | GitHub release'
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+        with:
+          tag_name: v${{ inputs.version }}
+          target_commitish: ${{ github.sha }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: dist/htmlup_*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
