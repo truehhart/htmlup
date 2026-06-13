@@ -54,5 +54,5 @@ they are dispatched directly.
 | Workflow | Trigger | What |
 |---|---|---|
 | `check.yaml` | push/PR to `master`, `v*` tags, reusable | lint (fmt + vet + golangci-lint + htmlhint + shellcheck) and test in parallel |
-| `publish.yaml` | reusable (`workflow_call`, `version` input) | GoReleaser builds + signs (no publish); `softprops/action-gh-release` creates the tag, generates notes, uploads artifacts |
+| `publish.yaml` | reusable (`workflow_call`, `version` input) | pushes the `v<version>` tag + builds from it; GoReleaser builds + signs (no publish); `softprops/action-gh-release` releases the tag, generates notes, uploads artifacts |
 | `release.yaml` | manual (`workflow_dispatch`, `version` without `v`) | orchestrator — validate version → `check.yaml` → `publish.yaml` (`needs: check`) |
