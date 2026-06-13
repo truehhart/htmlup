@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/google/go-github/v72/github"
@@ -129,13 +130,20 @@ var helloWorldTemplate string
 //go:embed templates/cleanup-workflow.yaml
 var cleanupWorkflowTemplate string
 
+// cleanupScript is the portable cleanup logic. It is unit-tested directly
+// (TestCleanupScript) and inlined into the workflow's run: block at generation
+// time, so the workflow stays self-contained while the logic stays testable.
+//
+//go:embed templates/cleanup.sh
+var cleanupScript string
+
 // helloWorldHTML returns a self-contained HTML5 landing page noting that the
 // repo was bootstrapped by htmlup and that stale uploads auto-expire after the
 // given TTL in days. The demo terminal is filled with the target repo (owner/name)
 // and its Pages URL so the page reflects the repo it was published to.
 func helloWorldHTML(ttlDays int, repo, url string) string {
 	r := strings.NewReplacer(
-		"{{TTL_DAYS}}", fmt.Sprintf("%d", ttlDays),
+		"{{TTL_DAYS}}", strconv.Itoa(ttlDays),
 		"{{REPO}}", repo,
 		"{{URL}}", url,
 	)
@@ -144,20 +152,22 @@ func helloWorldHTML(ttlDays int, repo, url string) string {
 
 // cleanupWorkflowYAML returns the cron cleanup GitHub Actions workflow,
 // parameterized by the cron schedule, the TTL in days, the Pages branch, and
-// any extra exclude globs the cleanup must never delete.
+// any extra exclude globs the cleanup must never delete. The cleanup logic
+// itself is inlined from cleanup.sh.
 func cleanupWorkflowYAML(cron string, ttlDays int, branch string, exclude []string) string {
 	r := strings.NewReplacer(
 		"{{CRON}}", cron,
-		"{{TTL_DAYS}}", fmt.Sprintf("%d", ttlDays),
+		"{{TTL_DAYS}}", strconv.Itoa(ttlDays),
 		"{{BRANCH}}", branch,
 		"{{EXCLUDE}}", cleanupExcludePattern(exclude),
+		"{{CLEANUP_SCRIPT}}", indentScript(cleanupScript, scriptIndent(cleanupWorkflowTemplate)),
 	)
 	return r.Replace(cleanupWorkflowTemplate)
 }
 
-// cleanupExcludePattern builds the shell case pattern of entries the cleanup
-// must never delete: the always-protected baseline plus any user globs, joined
-// with "|" for a single `case` clause.
+// cleanupExcludePattern builds the space-separated glob list (EXCLUDE_PATTERNS)
+// of entries the cleanup must never delete: the always-protected baseline plus
+// any user globs. cleanup.sh matches each glob against top-level entries.
 func cleanupExcludePattern(extra []string) string {
 	patterns := []string{"index.html", "CNAME", ".nojekyll", ".github"}
 	for _, e := range extra {
@@ -165,5 +175,33 @@ func cleanupExcludePattern(extra []string) string {
 			patterns = append(patterns, e)
 		}
 	}
-	return strings.Join(patterns, "|")
+	return strings.Join(patterns, " ")
+}
+
+// scriptIndent returns the leading-space width of the line holding the
+// {{CLEANUP_SCRIPT}} placeholder, so the inlined script matches the template's
+// run: block column without a hardcoded constant that could drift from the YAML.
+func scriptIndent(tmpl string) int {
+	for _, line := range strings.Split(tmpl, "\n") {
+		if strings.Contains(line, "{{CLEANUP_SCRIPT}}") {
+			return len(line) - len(strings.TrimLeft(line, " "))
+		}
+	}
+	return 0
+}
+
+// indentScript inlines cleanup.sh into a YAML run: block: the shebang is dropped
+// (the step already sets `shell: bash …`) and every non-empty line after the
+// first is padded to the block's column. The first line keeps the indentation
+// already present before the {{CLEANUP_SCRIPT}} placeholder.
+func indentScript(script string, indent int) string {
+	body := strings.TrimPrefix(script, "#!/usr/bin/env bash\n")
+	pad := strings.Repeat(" ", indent)
+	lines := strings.Split(strings.TrimRight(body, "\n"), "\n")
+	for i, l := range lines {
+		if i > 0 && l != "" {
+			lines[i] = pad + l
+		}
+	}
+	return strings.Join(lines, "\n")
 }
