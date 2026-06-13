@@ -6,7 +6,7 @@
     <title>htmlup — publish HTML to the public web in one command</title>
     <meta
       name="description"
-      content="htmlup is a small Go CLI that uploads HTML and hands you a public URL. Two backends: GitHub Pages and S3/CloudFront. It uploads and exits — no servers, no lifecycle, no stored credentials."
+      content="htmlup is a small Go CLI that uploads HTML and hands you a public URL per file. Two backends: GitHub Pages and S3/CloudFront. It uploads and exits — no servers, no lifecycle, no stored credentials."
     />
     <meta name="color-scheme" content="dark" />
 
@@ -17,7 +17,7 @@
       property="og:description"
       content="Publish HTML to the public web in one command."
     />
-    <meta property="og:url" content="https://truehhart.github.io/htmlup/" />
+    <meta property="og:url" content="https://htmlup.truehhart.com/" />
 
     <style>
       :root {
@@ -551,18 +551,18 @@
             <code>htmlup &lt;provider&gt; publish &lt;path&gt;</code>. Point it
             at a single <code>.html</code> file or a directory of static assets
             — directories upload recursively, preserving structure. On success
-            it prints the public URL and exits.
+            it prints a public URL per file and exits.
           </p>
 
           <div class="code">
             <div class="cap">GitHub Pages</div>
             <button class="copy" type="button">copy</button>
-            <pre><span class="cmt"># publish a directory to GitHub Pages</span>
-htmlup github publish ./site <span class="flag">--repo</span> owner/repo
+            <pre><span class="cmt"># branch &amp; dir auto-detected from the repo's Pages settings</span>
+htmlup github publish ./claude-html-reports <span class="flag">--repo</span> acme/share
 
-<span class="cmt"># with options: branch, subdir, custom domain</span>
-htmlup github publish ./site <span class="flag">--repo</span> owner/repo \
-  <span class="flag">--branch</span> gh-pages <span class="flag">--dir</span> docs <span class="flag">--cname</span> example.com</pre>
+<span class="cmt"># manual targeting (skips auto-detect); preview with --dry-run</span>
+htmlup github publish ./claude-html-reports <span class="flag">--repo</span> acme/share \
+  <span class="flag">--branch</span> gh-pages <span class="flag">--dir</span> reports <span class="flag">--dry-run</span></pre>
           </div>
 
           <div class="code">
@@ -579,7 +579,7 @@ htmlup s3 publish ./site <span class="flag">--bucket</span> my-bucket \
           <div class="code">
             <div class="cap">Global flags (every provider)</div>
             <button class="copy" type="button">copy</button>
-            <pre><span class="flag">--dry-run</span>      <span class="cmt"># enumerate what would upload + the resulting URL; no writes</span>
+            <pre><span class="flag">--dry-run</span>      <span class="cmt"># enumerate what would upload + the resulting URLs; no writes</span>
 <span class="flag">-v, --verbose</span>  <span class="cmt"># per-file progress and SDK-level detail</span></pre>
           </div>
         </div>
@@ -598,9 +598,10 @@ htmlup s3 publish ./site <span class="flag">--bucket</span> my-bucket \
               <h3>GitHub Pages <span class="tag">github</span></h3>
               <p>
                 Commits your file set to the target branch via the Git Data API,
-                creates the branch if missing, optionally writes a
-                <code>CNAME</code>, and flips Pages on if it isn't already. You
-                get the <code>*.github.io</code> URL back.
+                creates the branch if missing, and flips Pages on if it isn't
+                already. Auto-detects where Pages serves from and reads a
+                <code>CNAME</code> (if present) to report the custom-domain URL.
+                You get a public URL back for every file.
               </p>
             </div>
             <div class="card">
@@ -769,17 +770,26 @@ gh auth login   <span class="cmt"># missing token? actionable error points you h
 
         var steps = [
           { t: "$ ", cls: "pmt" },
-          { t: "htmlup github publish ./site ", cls: "cmd" },
-          { t: "--repo truehhart/htmlup\n", cls: "flag" },
-          { t: "published 1 file → ", cls: "out", instant: true },
+          { t: "htmlup github publish ./claude-html-reports ", cls: "cmd" },
+          { t: "--repo acme/share\n", cls: "flag" },
           {
-            t: "https://truehhart.github.io/htmlup/\n",
+            t: "✓ published 3 files to acme/share (branch main)\n",
+            cls: "out",
+            instant: true,
+          },
+          {
+            t: "https://acme.github.io/share/security-audit.html\n",
             cls: "url",
             instant: true,
           },
           {
-            t: "✓ live in 0.8s — uploaded and exited.",
-            cls: "out",
+            t: "https://acme.github.io/share/cost-savings-report.html\n",
+            cls: "url",
+            instant: true,
+          },
+          {
+            t: "https://acme.github.io/share/migration-plan.html",
+            cls: "url",
             instant: true,
           },
         ];

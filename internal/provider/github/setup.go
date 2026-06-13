@@ -38,7 +38,7 @@ func (p *Provider) setupCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Println(result.URL)
+			result.PrintURLs()
 			return nil
 		},
 	}
@@ -79,7 +79,7 @@ func (p *Provider) setup(ctx context.Context, dryRun, verbose bool) (provider.Re
 		}
 		fmt.Fprintf(os.Stderr, "would enable GitHub Pages (branch %s, path /)\n", p.branch)
 		fmt.Fprintf(os.Stderr, "would install %s to the default branch (cron %q, ttl %d days)\n", cleanupWorkflowPath, p.cron, p.ttlDays)
-		return provider.Result{URL: url}, nil
+		return provider.Result{URLs: []string{url}}, nil
 	}
 
 	// 1. Install the cleanup workflow on the default branch FIRST. It is the
@@ -125,7 +125,7 @@ func (p *Provider) setup(ctx context.Context, dryRun, verbose bool) (provider.Re
 		fmt.Fprintf(os.Stderr, "bootstrapped %s -> %s\n", p.repo, url)
 	}
 
-	return provider.Result{URL: url}, nil
+	return provider.Result{URLs: []string{url}}, nil
 }
 
 func (p *Provider) defaultBranch(ctx context.Context, client *github.Client, owner, repo string) (string, error) {

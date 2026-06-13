@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"fmt"
 	"io/fs"
 
 	"github.com/spf13/cobra"
@@ -13,7 +14,17 @@ type Target struct {
 }
 
 type Result struct {
-	URL string
+	// URLs are the served URLs of the published files, one per file in upload
+	// order. A single-file publish yields exactly one URL.
+	URLs []string
+}
+
+// PrintURLs writes each served URL on its own line to stdout. The bare,
+// newline-separated list is the publish commands' machine-readable output.
+func (r Result) PrintURLs() {
+	for _, u := range r.URLs {
+		fmt.Println(u)
+	}
 }
 
 type Provider interface {

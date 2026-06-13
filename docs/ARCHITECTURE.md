@@ -20,7 +20,7 @@ Each provider is a top-level subcommand. Provider-specific flags are scoped to t
 
 | Flag | Purpose |
 |---|---|
-| `--dry-run` | enumerate what would be uploaded and the resulting URL; perform no writes |
+| `--dry-run` | enumerate what would be uploaded and the resulting URLs; perform no writes |
 | `-v, --verbose` | per-file progress and SDK-level detail |
 
 **`htmlup github publish`**
@@ -44,7 +44,7 @@ By default `publish` targets wherever GitHub Pages already serves from: it reads
 | `--prefix` | no | key prefix (logical folder) |
 | `--region` | no | overrides region from the AWS config chain |
 
-On success the command prints the public URL (Pages URL, or the S3/CloudFront URL the operator wires up).
+On success the command prints a public URL per published file, one per line (Pages URLs, or the S3/CloudFront URLs the operator wires up).
 
 ## 3. Provider abstraction
 
@@ -59,7 +59,7 @@ type Target struct {
 }
 
 type Result struct {
-    URL string // public URL of the published content
+    URLs []string // public URL of each published file, in upload order
 }
 
 type Provider interface {
