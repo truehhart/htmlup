@@ -48,18 +48,12 @@ jobs:
         env:
           GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
 
-      - name: '[Build] | GoReleaser (build + sign, no publish)'
+      - name: '[Publish] | GoReleaser'
         shell: bash -euo pipefail {0}
-        run: goreleaser release --clean --skip=publish,announce
-        env:
-          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
-
-      - name: '[Publish] | GitHub release'
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
-        with:
-          tag_name: v${{ inputs.version }}
-          generate_release_notes: true
-          fail_on_unmatched_files: true
-          files: dist/htmlup_*
+        # The tag exists (pushed above), so GoReleaser builds, signs, and
+        # publishes the release — including the standalone binaries it only
+        # materializes during its own publish step.
+        run: goreleaser release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
