@@ -31,10 +31,10 @@ signs:
     cmd: cosign
     args:
       - sign-blob
-      - "--output-signature={{ .Signature }}"
-      - "--output-certificate={{ .Certificate }}"
+      - "--output-signature=${signature}"
+      - "--output-certificate=${certificate}"
       - "--yes"
-      - "{{ .Artifact }}"
+      - "${artifact}"
     artifacts: checksum
     signature: "${artifact}.sig"
     certificate: "${artifact}.pem"
@@ -47,8 +47,8 @@ signs:
       - "--passphrase-fd=0"
       - "--detach-sign"
       - "--output"
-      - "{{ .Signature }}"
-      - "{{ .Artifact }}"
+      - "${signature}"
+      - "${artifact}"
     artifacts: checksum
     signature: "${artifact}.gpgsig"
     stdin: "{{ .Env.GPG_PASSPHRASE }}"
