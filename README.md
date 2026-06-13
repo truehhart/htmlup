@@ -49,7 +49,7 @@ Each `publish` command also accepts `--dry-run` (enumerate what would be uploade
 `htmlup github setup` bootstraps a repo for use with `htmlup` in one shot:
 
 ```sh
-htmlup github setup --repo owner/name [--branch gh-pages] [--ttl-days 30] [--cron "0 3 * * 0"] [--exclude drafts/*] [--dry-run] [-v]
+htmlup github setup --repo owner/name [--branch gh-pages] [--ttl-days 30] [--cron "0 3 * * 0"] [--exclude staging,*.keep] [--dry-run] [-v]
 ```
 
 It:
@@ -58,7 +58,7 @@ It:
 2. Enables GitHub Pages (branch source, path `/`).
 3. Installs an opt-in cron cleanup workflow at `.github/workflows/htmlup-cleanup.yaml` on the repo's **default branch**.
 
-The cleanup workflow runs on the `--cron` schedule (default weekly, Sunday 03:00 UTC) and deletes published top-level entries on the Pages branch older than `--ttl-days` (default 30), based on each entry's last commit date. It never removes `index.html`, `CNAME`, `.nojekyll`, or `.github`; pass `--exclude` (repeatable or comma-separated glob patterns, e.g. `--exclude drafts/*,keep.html`) to protect more entries.
+The cleanup workflow runs on the `--cron` schedule (default weekly, Sunday 03:00 UTC) and deletes published top-level entries on the Pages branch older than `--ttl-days` (default 30), based on each entry's last commit date. It never removes `index.html`, `CNAME`, `.nojekyll`, or `.github`; pass `--exclude` (repeatable or comma-separated glob patterns, e.g. `--exclude staging,*.keep`) to protect more entries. Removals are recorded as a GitHub-signed (Verified) commit created via the API, so no signing keys are needed in your repo.
 
 ## Authentication
 
