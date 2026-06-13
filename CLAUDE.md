@@ -41,4 +41,4 @@
 
 ## Distribution
 
-GoReleaser builds static binaries for `linux`/`darwin` × `amd64`/`arm64` (no Windows). Releases are cut from tags via GitHub Actions (wired up by a separate agent).
+GoReleaser builds static binaries for `linux`/`darwin` × `amd64`/`arm64` (no Windows). Releases are cut from `v*` tags via `release.yaml`. Each release publishes tar.gz archives (binary + LICENSE + README) and standalone binaries.
