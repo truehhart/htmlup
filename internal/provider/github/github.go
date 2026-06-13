@@ -17,8 +17,8 @@ import (
 	"golang.org/x/oauth2"
 	"golang.org/x/sync/errgroup"
 
-	"github.com/truehhart/htmlupclaude/internal/fsutil"
-	"github.com/truehhart/htmlupclaude/internal/provider"
+	"github.com/truehhart/htmlup/internal/fsutil"
+	"github.com/truehhart/htmlup/internal/provider"
 )
 
 func init() {
@@ -26,10 +26,13 @@ func init() {
 }
 
 type Provider struct {
-	repo   string
-	branch string
-	dir    string
-	cname  string
+	repo    string
+	branch  string
+	dir     string
+	cname   string
+	ttlDays int
+	cron    string
+	exclude []string
 }
 
 func (p *Provider) Name() string { return "github" }
@@ -40,6 +43,7 @@ func (p *Provider) Command() *cobra.Command {
 		Short: "GitHub Pages operations",
 	}
 	cmd.AddCommand(p.publishCmd())
+	cmd.AddCommand(p.setupCmd())
 	return cmd
 }
 
@@ -125,82 +129,9 @@ func (p *Provider) publish(ctx context.Context, t provider.Target) (provider.Res
 		return provider.Result{URL: url}, nil
 	}
 
-	treeEntries := make([]*github.TreeEntry, len(entries))
-	g, gctx := errgroup.WithContext(ctx)
-	g.SetLimit(10)
-	for i, e := range entries {
-		g.Go(func() error {
-			if t.Verbose {
-				fmt.Fprintf(os.Stderr, "creating blob: %s (%d bytes)\n", e.path, len(e.content))
-			}
-			blob, _, err := client.Git.CreateBlob(gctx, owner, repoName, &github.Blob{
-				Content:  github.Ptr(base64.StdEncoding.EncodeToString(e.content)),
-				Encoding: github.Ptr("base64"),
-			})
-			if err != nil {
-				return fmt.Errorf("creating blob for %s: %w", e.path, err)
-			}
-			treeEntries[i] = &github.TreeEntry{
-				Path: github.Ptr(e.path),
-				Mode: github.Ptr("100644"),
-				Type: github.Ptr("blob"),
-				SHA:  blob.SHA,
-			}
-			return nil
-		})
-	}
-	if err := g.Wait(); err != nil {
+	newCommit, err := pushCommit(ctx, client, owner, repoName, p.branch, "publish via htmlup", entries, t.Verbose)
+	if err != nil {
 		return provider.Result{}, err
-	}
-
-	ref, _, err := client.Git.GetRef(ctx, owner, repoName, "refs/heads/"+p.branch)
-	var branchExists bool
-	if err != nil {
-		var ghErr *github.ErrorResponse
-		if !errors.As(err, &ghErr) || ghErr.Response.StatusCode != 404 {
-			return provider.Result{}, fmt.Errorf("checking branch %s: %w", p.branch, err)
-		}
-	} else {
-		branchExists = true
-	}
-
-	var baseTree string
-	var parents []*github.Commit
-	if branchExists {
-		commitSHA := ref.Object.GetSHA()
-		commit, _, err := client.Git.GetCommit(ctx, owner, repoName, commitSHA)
-		if err != nil {
-			return provider.Result{}, fmt.Errorf("getting commit %s: %w", commitSHA, err)
-		}
-		baseTree = commit.Tree.GetSHA()
-		parents = []*github.Commit{{SHA: github.Ptr(commitSHA)}}
-	}
-
-	tree, _, err := client.Git.CreateTree(ctx, owner, repoName, baseTree, treeEntries)
-	if err != nil {
-		return provider.Result{}, fmt.Errorf("creating tree: %w", err)
-	}
-
-	newCommit, _, err := client.Git.CreateCommit(ctx, owner, repoName, &github.Commit{
-		Message: github.Ptr("publish via htmlup"),
-		Tree:    tree,
-		Parents: parents,
-	}, nil)
-	if err != nil {
-		return provider.Result{}, fmt.Errorf("creating commit: %w", err)
-	}
-
-	if branchExists {
-		ref.Object.SHA = newCommit.SHA
-		_, _, err = client.Git.UpdateRef(ctx, owner, repoName, ref, false)
-	} else {
-		_, _, err = client.Git.CreateRef(ctx, owner, repoName, &github.Reference{
-			Ref:    github.Ptr("refs/heads/" + p.branch),
-			Object: &github.GitObject{SHA: newCommit.SHA},
-		})
-	}
-	if err != nil {
-		return provider.Result{}, fmt.Errorf("updating branch ref: %w", err)
 	}
 
 	if t.Verbose {
@@ -252,6 +183,98 @@ func (p *Provider) ensurePages(ctx context.Context, client *github.Client, owner
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: could not enable GitHub Pages: %v\n", err)
 	}
+}
+
+// pushCommit creates blobs for every entry, builds a tree on top of the
+// branch's current state (or a fresh tree if the branch is missing), commits
+// it, and points the branch ref at the new commit. It creates the branch if it
+// does not already exist. Both the publish and setup flows share this logic.
+func pushCommit(
+	ctx context.Context,
+	client *github.Client,
+	owner, repo, branch, message string,
+	entries []fileEntry,
+	verbose bool,
+) (*github.Commit, error) {
+	treeEntries := make([]*github.TreeEntry, len(entries))
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(10)
+	for i, e := range entries {
+		g.Go(func() error {
+			if verbose {
+				fmt.Fprintf(os.Stderr, "creating blob: %s (%d bytes)\n", e.path, len(e.content))
+			}
+			blob, _, err := client.Git.CreateBlob(gctx, owner, repo, &github.Blob{
+				Content:  github.Ptr(base64.StdEncoding.EncodeToString(e.content)),
+				Encoding: github.Ptr("base64"),
+			})
+			if err != nil {
+				return fmt.Errorf("creating blob for %s: %w", e.path, err)
+			}
+			treeEntries[i] = &github.TreeEntry{
+				Path: github.Ptr(e.path),
+				Mode: github.Ptr("100644"),
+				Type: github.Ptr("blob"),
+				SHA:  blob.SHA,
+			}
+			return nil
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
+
+	ref, _, err := client.Git.GetRef(ctx, owner, repo, "refs/heads/"+branch)
+	var branchExists bool
+	if err != nil {
+		var ghErr *github.ErrorResponse
+		if !errors.As(err, &ghErr) || ghErr.Response.StatusCode != 404 {
+			return nil, fmt.Errorf("checking branch %s: %w", branch, err)
+		}
+	} else {
+		branchExists = true
+	}
+
+	var baseTree string
+	var parents []*github.Commit
+	if branchExists {
+		commitSHA := ref.Object.GetSHA()
+		commit, _, err := client.Git.GetCommit(ctx, owner, repo, commitSHA)
+		if err != nil {
+			return nil, fmt.Errorf("getting commit %s: %w", commitSHA, err)
+		}
+		baseTree = commit.Tree.GetSHA()
+		parents = []*github.Commit{{SHA: github.Ptr(commitSHA)}}
+	}
+
+	tree, _, err := client.Git.CreateTree(ctx, owner, repo, baseTree, treeEntries)
+	if err != nil {
+		return nil, fmt.Errorf("creating tree: %w", err)
+	}
+
+	newCommit, _, err := client.Git.CreateCommit(ctx, owner, repo, &github.Commit{
+		Message: github.Ptr(message),
+		Tree:    tree,
+		Parents: parents,
+	}, nil)
+	if err != nil {
+		return nil, fmt.Errorf("creating commit: %w", err)
+	}
+
+	if branchExists {
+		ref.Object.SHA = newCommit.SHA
+		_, _, err = client.Git.UpdateRef(ctx, owner, repo, ref, false)
+	} else {
+		_, _, err = client.Git.CreateRef(ctx, owner, repo, &github.Reference{
+			Ref:    github.Ptr("refs/heads/" + branch),
+			Object: &github.GitObject{SHA: newCommit.SHA},
+		})
+	}
+	if err != nil {
+		return nil, fmt.Errorf("updating branch ref: %w", err)
+	}
+
+	return newCommit, nil
 }
 
 type fileEntry struct {
