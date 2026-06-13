@@ -2,6 +2,7 @@ package github
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"testing/fstest"
 )
@@ -139,6 +140,67 @@ func TestCollectFiles(t *testing.T) {
 			t.Errorf("got %d entries, want 0", len(entries))
 		}
 	})
+}
+
+func TestHelloWorldHTML(t *testing.T) {
+	html := helloWorldHTML(45, "truehhart/htmlup", "https://truehhart.github.io/htmlup/")
+
+	if !strings.HasPrefix(strings.ToLower(html), "<!doctype html>") {
+		t.Errorf("html should start with a doctype, got: %.20q", html)
+	}
+	if !strings.Contains(html, "htmlup") {
+		t.Error("html should mention htmlup")
+	}
+	if !strings.Contains(html, "45 days") {
+		t.Error("html should mention the interpolated TTL")
+	}
+	if !strings.Contains(html, "truehhart/htmlup") {
+		t.Error("html should mention the interpolated repo")
+	}
+	if !strings.Contains(html, "https://truehhart.github.io/htmlup/") {
+		t.Error("html should mention the interpolated Pages URL")
+	}
+	if strings.Contains(html, "{{") {
+		t.Error("html still contains an uninterpolated placeholder")
+	}
+}
+
+func TestCleanupWorkflowYAML(t *testing.T) {
+	yaml := cleanupWorkflowYAML("0 5 * * 1", 14, "gh-pages", []string{"drafts/*", "keep.html"})
+
+	if strings.Contains(yaml, "{{") {
+		t.Error("yaml still contains an uninterpolated placeholder")
+	}
+
+	wantContains := []string{
+		`cron: '0 5 * * 1'`,  // cron interpolated
+		`TTL_DAYS: '14'`,     // ttl interpolated
+		`ref: 'gh-pages'`,    // branch interpolated
+		"workflow_dispatch:", // manual trigger
+		"permissions:",       // permissions block
+		"contents: write",    // write permission
+		"actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3", // SHA-pinned, per .github/CLAUDE.md
+		"shell: bash -euo pipefail {0}",                                      // explicit hardened shell
+		`name: '[Setup] | Checkout Pages branch'`,                            // [TYPE] | Action naming
+		`name: '[Cleanup] | Delete entries older than TTL'`,
+		"git log -1 --format=%cI",
+	}
+	for _, want := range wantContains {
+		if !strings.Contains(yaml, want) {
+			t.Errorf("yaml missing %q", want)
+		}
+	}
+
+	// The exclude case clause must hold the protected baseline plus user globs.
+	wantExcluded := []string{"index.html", "CNAME", ".nojekyll", ".github", "drafts/*", "keep.html"}
+	for _, e := range wantExcluded {
+		if !strings.Contains(yaml, e) {
+			t.Errorf("yaml exclude clause should reference %q", e)
+		}
+	}
+	if !strings.Contains(yaml, "index.html|CNAME|.nojekyll|.github|drafts/*|keep.html)") {
+		t.Error("yaml should join baseline + user excludes into one case clause")
+	}
 }
 
 func TestResolveToken(t *testing.T) {
