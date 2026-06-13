@@ -1,4 +1,4 @@
-module github.com/truehhart/htmlupclaude
+module github.com/truehhart/htmlup
 
 go 1.26
 
