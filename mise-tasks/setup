@@ -1,12 +1,10 @@
 #!/usr/bin/env nu
-# Download Go module dependencies and install the pre-commit hook.
+# Download Go module dependencies and install pre-commit hooks.
 
 print "→ downloading Go modules"
 go mod download
 
-let hook = ".git/hooks/pre-commit"
-print $"→ installing pre-commit hook at ($hook)"
-"#!/usr/bin/env sh\nexec mise run pre-commit\n" | save --force $hook
-chmod +x $hook
+print "→ installing pre-commit hooks"
+pre-commit install
 
 print "✓ setup complete — `mise run check` runs fmt + vet + lint + test"
