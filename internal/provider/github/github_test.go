@@ -168,6 +168,27 @@ func TestHelloWorldHTML(t *testing.T) {
 	}
 }
 
+func TestPagesMismatchWarning(t *testing.T) {
+	tests := []struct {
+		name                          string
+		buildType, srcBranch, srcPath string
+		target                        string
+		wantWarn                      bool
+	}{
+		{"match", "legacy", "gh-pages", "/", "gh-pages", false},
+		{"different branch", "legacy", "master", "/docs", "gh-pages", true},
+		{"workflow build type", "workflow", "", "", "gh-pages", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := pagesMismatchWarning(tt.buildType, tt.srcBranch, tt.srcPath, tt.target)
+			if (got != "") != tt.wantWarn {
+				t.Errorf("pagesMismatchWarning() = %q, wantWarn %v", got, tt.wantWarn)
+			}
+		})
+	}
+}
+
 func TestCleanupWorkflowYAML(t *testing.T) {
 	yaml := cleanupWorkflowYAML("0 5 * * 1", 14, "gh-pages", []string{"staging", "*.keep"})
 
