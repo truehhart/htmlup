@@ -2,6 +2,9 @@ package github
 
 import (
 	"context"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -166,24 +169,31 @@ func TestHelloWorldHTML(t *testing.T) {
 }
 
 func TestCleanupWorkflowYAML(t *testing.T) {
-	yaml := cleanupWorkflowYAML("0 5 * * 1", 14, "gh-pages", []string{"drafts/*", "keep.html"})
+	yaml := cleanupWorkflowYAML("0 5 * * 1", 14, "gh-pages", []string{"staging", "*.keep"})
 
-	if strings.Contains(yaml, "{{") {
-		t.Error("yaml still contains an uninterpolated placeholder")
+	// All htmlup placeholders must be interpolated. (GitHub's own ${{ … }}
+	// expressions legitimately remain, so we check our tokens specifically.)
+	for _, ph := range []string{"{{CRON}}", "{{TTL_DAYS}}", "{{BRANCH}}", "{{EXCLUDE}}", "{{CLEANUP_SCRIPT}}"} {
+		if strings.Contains(yaml, ph) {
+			t.Errorf("yaml still contains uninterpolated placeholder %q", ph)
+		}
 	}
 
 	wantContains := []string{
-		`cron: '0 5 * * 1'`,  // cron interpolated
-		`TTL_DAYS: '14'`,     // ttl interpolated
-		`ref: 'gh-pages'`,    // branch interpolated
-		"workflow_dispatch:", // manual trigger
-		"permissions:",       // permissions block
-		"contents: write",    // write permission
+		`cron: '0 5 * * 1'`,             // cron interpolated
+		`TTL_DAYS: '14'`,                // ttl interpolated into env
+		`ref: 'gh-pages'`,               // branch interpolated
+		`BRANCH: 'gh-pages'`,            // branch passed to the script via env
+		"GH_TOKEN: ${{ github.token }}", // token for the signed API commit
+		"workflow_dispatch:",            // manual trigger
+		"contents: write",               // write permission
 		"actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3", // SHA-pinned, per .github/CLAUDE.md
 		"shell: bash -euo pipefail {0}",                                      // explicit hardened shell
-		`name: '[Setup] | Checkout Pages branch'`,                            // [TYPE] | Action naming
-		`name: '[Cleanup] | Delete entries older than TTL'`,
-		"git log -1 --format=%cI",
+		`name: '[Cleanup] | Remove entries older than TTL'`,                  // [TYPE] | Action naming
+		"run-name: htmlup-cleanup (older than 14d)",                          // dynamic run-name
+		"git ls-tree --name-only HEAD",                                       // inlined cleanup.sh body
+		"git log -1 --format=%ct",
+		"createCommitOnBranch", // signed commit via the GitHub API
 	}
 	for _, want := range wantContains {
 		if !strings.Contains(yaml, want) {
@@ -191,15 +201,18 @@ func TestCleanupWorkflowYAML(t *testing.T) {
 		}
 	}
 
-	// The exclude case clause must hold the protected baseline plus user globs.
-	wantExcluded := []string{"index.html", "CNAME", ".nojekyll", ".github", "drafts/*", "keep.html"}
-	for _, e := range wantExcluded {
-		if !strings.Contains(yaml, e) {
-			t.Errorf("yaml exclude clause should reference %q", e)
-		}
+	// EXCLUDE_PATTERNS must hold the protected baseline plus user globs,
+	// space-separated (cleanup.sh matches each as a glob).
+	if !strings.Contains(yaml, "EXCLUDE_PATTERNS: 'index.html CNAME .nojekyll .github staging *.keep'") {
+		t.Errorf("yaml should set EXCLUDE_PATTERNS to baseline + user globs, got:\n%s", yaml)
 	}
-	if !strings.Contains(yaml, "index.html|CNAME|.nojekyll|.github|drafts/*|keep.html)") {
-		t.Error("yaml should join baseline + user excludes into one case clause")
+
+	// The inlined script must be indented into the run: block (no stray shebang).
+	if strings.Contains(yaml, "#!/usr/bin/env bash") {
+		t.Error("inlined script should not carry its shebang into the run block")
+	}
+	if !strings.Contains(yaml, "\n          cutoff=$((") {
+		t.Error("inlined script lines should be padded to the run: block column")
 	}
 }
 
@@ -253,4 +266,95 @@ func TestResolveToken(t *testing.T) {
 			t.Fatal("expected error when no token available")
 		}
 	})
+}
+
+// TestCleanupScript runs the embedded cleanup.sh against a throwaway git repo so
+// the workflow's actual entry-selection logic is exercised, not just its
+// rendering. It runs in DRY_RUN mode — selecting + staging the stale entries is
+// what's worth testing; the final commit goes through the GitHub API and can't
+// be exercised offline. Portable (no GNU-only date parsing), so it runs on both
+// CI and macOS dev machines.
+func TestCleanupScript(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not available")
+	}
+
+	repo := t.TempDir()
+	// Keep the script outside the repo so it isn't itself a tracked entry.
+	script := filepath.Join(t.TempDir(), "cleanup.sh")
+	if err := os.WriteFile(script, []byte(cleanupScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	const old = "2000-01-01T00:00:00Z" // well past any TTL
+
+	git := func(env []string, args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repo
+		cmd.Env = append(os.Environ(), env...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+		}
+	}
+	write := func(name, content string) {
+		t.Helper()
+		full := filepath.Join(repo, name)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	exists := func(name string) bool {
+		_, err := os.Stat(filepath.Join(repo, name))
+		return err == nil
+	}
+
+	git(nil, "init", "--quiet")
+	git(nil, "config", "user.email", "test@example.com")
+	git(nil, "config", "user.name", "test")
+
+	// Old entries (committed in the past): some protected, some not.
+	for _, f := range []string{"index.html", "stale.html", "keep.html", "notes.keep", "staging/x.html", "archive/y.html"} {
+		write(f, "old")
+	}
+	git(nil, "add", "-A")
+	oldDate := []string{"GIT_AUTHOR_DATE=" + old, "GIT_COMMITTER_DATE=" + old}
+	git(oldDate, "commit", "--quiet", "-m", "old content")
+
+	// A fresh entry committed now — must survive the TTL.
+	write("fresh.html", "new")
+	git(nil, "add", "-A")
+	git(nil, "commit", "--quiet", "-m", "fresh content")
+
+	cmd := exec.Command("bash", script)
+	cmd.Dir = repo
+	cmd.Env = append(
+		os.Environ(),
+		"DRY_RUN=1",
+		"TTL_DAYS=1",
+		"BRANCH=main",
+		"EXCLUDE_PATTERNS=index.html CNAME .nojekyll .github keep.html *.keep staging",
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("cleanup.sh failed: %v\n%s", err, out)
+	}
+
+	// Stale, non-excluded entries are staged for deletion (gone from the tree);
+	// everything else survives.
+	for _, gone := range []string{"stale.html", "archive"} {
+		if exists(gone) {
+			t.Errorf("expected %q to be deleted", gone)
+		}
+	}
+	for _, kept := range []string{"index.html", "keep.html", "notes.keep", "staging", "fresh.html"} {
+		if !exists(kept) {
+			t.Errorf("expected %q to be kept", kept)
+		}
+	}
 }

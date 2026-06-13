@@ -6,6 +6,7 @@ go = "1.26.4"
 "aqua:goreleaser/goreleaser" = "2.16.0"
 node = "24.16.0"
 "npm:htmlhint" = "1.9.2"
+"aqua:koalaman/shellcheck" = "0.11.0"
 
 [tasks.build]
 description = "Build the htmlup binary into ./bin"
@@ -24,6 +25,10 @@ run = "golangci-lint run"
 description = "Lint static HTML with htmlhint"
 run = "htmlhint docs/site internal/provider/github/templates"
 
+[tasks.lint-sh]
+description = "Lint shell scripts with shellcheck"
+run = "shellcheck internal/provider/github/templates/cleanup.sh"
+
 [tasks.fmt]
 description = "Auto-format with gofumpt"
 run = "gofumpt -w ."
@@ -34,7 +39,7 @@ run = "go mod tidy"
 
 [tasks.check]
 description = "Everything the pre-commit hook runs"
-depends = ["fmt", "vet", "lint", "lint-html", "test"]
+depends = ["fmt", "vet", "lint", "lint-html", "lint-sh", "test"]
 
 [tasks.pre-commit]
 depends = ["check"]

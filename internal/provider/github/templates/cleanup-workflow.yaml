@@ -2,6 +2,7 @@
 # Periodically deletes published files/directories older than the configured
 # TTL from the Pages branch, based on each entry's last commit date.
 name: htmlup-cleanup
+run-name: htmlup-cleanup (older than {{TTL_DAYS}}d)
 
 on:
   schedule:
@@ -21,35 +22,13 @@ jobs:
           ref: '{{BRANCH}}'
           fetch-depth: 0
 
-      - name: '[Cleanup] | Delete entries older than TTL'
+      - name: '[Cleanup] | Remove entries older than TTL'
         shell: bash -euo pipefail {0}
         env:
           TTL_DAYS: '{{TTL_DAYS}}'
+          BRANCH: '{{BRANCH}}'
+          EXCLUDE_PATTERNS: '{{EXCLUDE}}'
+          # Lets the script create a GitHub-signed cleanup commit via the API.
+          GH_TOKEN: ${{ github.token }}
         run: |
-          cutoff=$(date -u -d "$TTL_DAYS days ago" +%s)
-          changed=0
-          # Iterate top-level entries; never touch excluded patterns
-          # (baseline: index.html, CNAME, .nojekyll, .github — plus any --exclude globs).
-          for entry in $(git ls-tree --name-only HEAD); do
-            case "$entry" in
-              {{EXCLUDE}}) continue ;;
-            esac
-            last=$(git log -1 --format=%cI -- "$entry")
-            if [ -z "$last" ]; then
-              continue
-            fi
-            last_ts=$(date -u -d "$last" +%s)
-            if [ "$last_ts" -lt "$cutoff" ]; then
-              echo "removing stale entry: $entry (last commit $last)"
-              git rm -r --quiet -- "$entry"
-              changed=1
-            fi
-          done
-          if [ "$changed" -eq 1 ]; then
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git commit -m "htmlup-cleanup: remove entries older than ${TTL_DAYS} days"
-            git push origin "HEAD:{{BRANCH}}"
-          else
-            echo "nothing to clean up"
-          fi
+          {{CLEANUP_SCRIPT}}
