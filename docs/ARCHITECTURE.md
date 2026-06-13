@@ -30,10 +30,11 @@ Each provider is a top-level subcommand. Provider-specific flags are scoped to t
 | `--repo owner/name` | yes | target repository |
 | `--branch` | no | branch to push to (default: auto-detected from the repo's Pages source, else `gh-pages`) |
 | `--dir` | no | subdirectory within the branch (default: auto-detected from the Pages source path) |
-| `--cname` | no | write a `CNAME` file for a custom domain |
 | `--no-auto` | no | disable Pages auto-detection; use `--branch`/`--dir` as given |
 
 By default `publish` targets wherever GitHub Pages already serves from: it reads the repo's Pages source (branch + path) and pushes there, so a plain `htmlup github publish ./site --repo owner/name` lands in the right place. Setting `--branch`/`--dir` explicitly (or `--no-auto`) switches to manual targeting; if Pages is off or built from a workflow, it falls back to `gh-pages`.
+
+`publish` does not write a `CNAME` — it only **reads** an existing one at the target's source root to report the custom-domain URL, and (because it merges onto the branch's tree) leaves it untouched. Configuring a custom domain is `htmlup github setup --cname`'s job.
 
 **`htmlup s3 publish`**
 
@@ -71,7 +72,7 @@ Providers self-register into a registry (`init()` → `provider.Register(...)`).
 
 MVP providers:
 
-- `internal/provider/github` — uses `go-github`. Commits the file set to the target branch (Git Data API / Contents API), creates the branch if missing, optionally writes `CNAME`. Enables Pages if not already on.
+- `internal/provider/github` — uses `go-github`. Commits the file set to the target branch (Git Data API / Contents API), creates the branch if missing. `publish` reads an existing `CNAME` for the URL; `setup --cname` writes one. Enables Pages if not already on.
 - `internal/provider/s3` — uses `aws-sdk-go-v2`. `PutObject` per file with content-type inferred from extension. No bucket policy / website-config mutation in the MVP (the operator owns exposure via CloudFront).
 
 ## 4. Authentication
@@ -87,7 +88,7 @@ The publish path itself never deletes anything. For users who want pages to expi
 
 `htmlup github setup --repo owner/name` installs this workflow in one shot. It:
 
-1. publishes a generated hello-world `index.html` to the Pages branch (default `gh-pages`),
+1. publishes a generated hello-world `index.html` to the Pages branch (default `gh-pages`), plus a `CNAME` file when `--cname` is given,
 2. enables GitHub Pages (branch source, path `/`), and
 3. commits `.github/workflows/htmlup-cleanup.yaml` to the target repo's **default branch**.
 

@@ -30,10 +30,10 @@ Each provider is a top-level subcommand; its flags are scoped to that provider's
 GitHub Pages:
 
 ```sh
-htmlup github publish <path> --repo owner/repo [--cname example.com] [--no-auto --branch gh-pages --dir docs]
+htmlup github publish <path> --repo owner/repo [--no-auto --branch gh-pages --dir docs]
 ```
 
-By default the target branch and subdirectory are auto-detected from the repo's existing GitHub Pages source, so a plain `htmlup github publish <path> --repo owner/repo` lands where Pages already serves. Pass `--branch`/`--dir` (or `--no-auto`) only for manual targeting; it falls back to `gh-pages` when Pages isn't set up.
+By default the target branch and subdirectory are auto-detected from the repo's existing GitHub Pages source, so a plain `htmlup github publish <path> --repo owner/repo` lands where Pages already serves. Pass `--branch`/`--dir` (or `--no-auto`) only for manual targeting; it falls back to `gh-pages` when Pages isn't set up. `publish` reads an existing `CNAME` to report the custom-domain URL but never writes one — configure a custom domain with `github setup --cname`.
 
 S3 (exposed via CloudFront):
 
@@ -58,5 +58,5 @@ Useful flags (on each `publish` command):
 
 ## Notes
 
-- `htmlup` does not expire or clean up old uploads on its own. For GitHub Pages, `htmlup github setup --repo owner/name [--branch gh-pages] [--ttl-days 30] [--cron "0 3 * * 0"] [--exclude staging,*.keep]` bootstraps a repo: it publishes a hello-world landing page, enables Pages, and installs an opt-in cron cleanup workflow (`.github/workflows/htmlup-cleanup.yaml`) on the repo's default branch. That workflow deletes published top-level entries older than `--ttl-days` and never touches `index.html`, `CNAME`, `.nojekyll`, `.github`, or any extra `--exclude` glob patterns; removals land as a GitHub-signed commit. Suggest it if the user asks about cleanup or is setting up a fresh Pages repo.
+- `htmlup` does not expire or clean up old uploads on its own. For GitHub Pages, `htmlup github setup --repo owner/name [--branch gh-pages] [--ttl-days 30] [--cron "0 3 * * 0"] [--cname example.com] [--exclude staging,*.keep]` bootstraps a repo: it publishes a hello-world landing page (plus a CNAME file when `--cname` is given), enables Pages, and installs an opt-in cron cleanup workflow (`.github/workflows/htmlup-cleanup.yaml`) on the repo's default branch. That workflow deletes published top-level entries older than `--ttl-days` and never touches `index.html`, `CNAME`, `.nojekyll`, `.github`, or any extra `--exclude` glob patterns; removals land as a GitHub-signed commit. Suggest it if the user asks about cleanup or is setting up a fresh Pages repo.
 - Windows is not supported; binaries are `linux`/`darwin` on `amd64`/`arm64`.

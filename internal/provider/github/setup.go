@@ -47,6 +47,7 @@ func (p *Provider) setupCmd() *cobra.Command {
 	cmd.Flags().StringVar(&p.branch, "branch", "gh-pages", "Pages branch to bootstrap")
 	cmd.Flags().IntVar(&p.ttlDays, "ttl-days", 30, "delete published files older than this many days")
 	cmd.Flags().StringVar(&p.cron, "cron", "0 3 * * 0", "cron schedule for the cleanup workflow")
+	cmd.Flags().StringVar(&p.cname, "cname", "", "custom domain to configure (writes a CNAME file to the Pages branch)")
 	cmd.Flags().StringSliceVar(&p.exclude, "exclude", nil, "extra top-level entries the cleanup never deletes; globs match the entry name, so a directory is its bare name, e.g. 'drafts' not 'drafts/*' (repeatable or comma-separated)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show what would be done without writing")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "per-step progress and SDK detail")
@@ -73,6 +74,9 @@ func (p *Provider) setup(ctx context.Context, dryRun, verbose bool) (provider.Re
 
 	if dryRun {
 		fmt.Fprintf(os.Stderr, "would publish landing page index.html to %s branch %s\n", p.repo, p.branch)
+		if p.cname != "" {
+			fmt.Fprintf(os.Stderr, "would write CNAME for custom domain %s\n", p.cname)
+		}
 		fmt.Fprintf(os.Stderr, "would enable GitHub Pages (branch %s, path /)\n", p.branch)
 		fmt.Fprintf(os.Stderr, "would install %s to the default branch (cron %q, ttl %d days)\n", cleanupWorkflowPath, p.cron, p.ttlDays)
 		return provider.Result{URL: url}, nil
@@ -98,10 +102,14 @@ func (p *Provider) setup(ctx context.Context, dryRun, verbose bool) (provider.Re
 		fmt.Fprintf(os.Stderr, "workflow commit: %s (branch %s)\n", workflowCommit.GetSHA(), defaultBranch)
 	}
 
-	// 2. Publish the hello-world landing page to the Pages branch (creates it).
+	// 2. Publish the hello-world landing page to the Pages branch (creates it),
+	// plus a CNAME file when a custom domain was requested.
+	landingFiles := []fileEntry{{path: "index.html", content: []byte(landing)}}
+	if p.cname != "" {
+		landingFiles = append(landingFiles, fileEntry{path: "CNAME", content: []byte(p.cname + "\n")})
+	}
 	landingCommit, err := pushCommit(ctx, client, owner, repoName, p.branch,
-		"bootstrap landing page via htmlup",
-		[]fileEntry{{path: "index.html", content: []byte(landing)}}, verbose)
+		"bootstrap landing page via htmlup", landingFiles, verbose)
 	if err != nil {
 		return provider.Result{}, err
 	}

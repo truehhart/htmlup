@@ -84,7 +84,6 @@ func (p *Provider) publishCmd() *cobra.Command {
 	_ = cmd.MarkFlagRequired("repo")
 	cmd.Flags().StringVar(&p.branch, "branch", "gh-pages", "branch to push to (default: auto-detected from Pages settings)")
 	cmd.Flags().StringVar(&p.dir, "dir", "", "subdirectory within the branch (default: auto-detected from Pages settings)")
-	cmd.Flags().StringVar(&p.cname, "cname", "", "custom domain (writes CNAME file)")
 	cmd.Flags().BoolVar(&p.noAuto, "no-auto", false, "don't auto-detect the target from GitHub Pages settings; use --branch/--dir as given")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show what would be uploaded without writing")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "per-file progress and SDK detail")
@@ -128,16 +127,20 @@ func (p *Provider) publish(ctx context.Context, t provider.Target, autoDetect bo
 	if err != nil {
 		return provider.Result{}, fmt.Errorf("reading files: %w", err)
 	}
-	if p.cname != "" {
-		entries = append(entries, fileEntry{path: "CNAME", content: []byte(p.cname + "\n")})
-	}
 	if len(entries) == 0 {
 		return provider.Result{}, fmt.Errorf("no files to publish")
 	}
 
+	// Report the served URL. A custom domain wins (read from an existing CNAME
+	// file in the target — publish never writes one; that's `github setup`),
+	// then the auto-detected Pages URL, then the github.io default. pushCommit
+	// merges onto the branch's tree, so any existing CNAME is left untouched.
 	url := p.pagesURL(owner, repoName)
-	if autoURL != "" && p.cname == "" {
+	if autoURL != "" {
 		url = autoURL
+	}
+	if domain := readCNAME(ctx, client, owner, repoName, p.branch, p.dir); domain != "" {
+		url = "https://" + domain + "/"
 	}
 
 	if t.DryRun {
@@ -218,6 +221,25 @@ func (p *Provider) ensurePages(ctx context.Context, client *github.Client, owner
 		return fmt.Errorf("enabling GitHub Pages: %w", err)
 	}
 	return nil
+}
+
+// readCNAME returns the custom domain from a CNAME file at the target's source
+// root (branch + dir), or "" if there is none. publish only reads it — writing
+// the CNAME is `github setup`'s job.
+func readCNAME(ctx context.Context, client *github.Client, owner, repo, branch, dir string) string {
+	name := "CNAME"
+	if dir != "" {
+		name = path.Join(dir, "CNAME")
+	}
+	file, _, _, err := client.Repositories.GetContents(ctx, owner, repo, name, &github.RepositoryContentGetOptions{Ref: branch})
+	if err != nil || file == nil {
+		return ""
+	}
+	content, err := file.GetContent()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(content)
 }
 
 // applyAutoTarget points the publish at wherever GitHub Pages already serves
