@@ -26,7 +26,9 @@ Architecture & command reference: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
 [Homebrew](https://brew.sh) (macOS and Linux):
 
 ```sh
-brew install truehhart/tap/htmlup
+brew tap truehhart/tap
+brew trust truehhart/tap   # one-time: Homebrew 6+ requires trusting non-official taps
+brew install --cask htmlup
 ```
 
 Otherwise grab a prebuilt binary or `.tar.gz` for your platform from the
