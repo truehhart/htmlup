@@ -60,6 +60,13 @@ func (f *memFile) Stat() (fs.FileInfo, error) { return f.info, nil }
 func (f *memFile) Read(b []byte) (int, error) { return f.reader.Read(b) }
 func (f *memFile) Close() error               { return nil }
 
+// Seek lets consumers that type-assert for io.Seeker (e.g. the AWS SDK, which
+// rewinds the request body to sign it and to retry on transient failures)
+// operate on a single-file upload just as they would on a real *os.File.
+func (f *memFile) Seek(offset int64, whence int) (int64, error) {
+	return f.reader.Seek(offset, whence)
+}
+
 type rootDir struct {
 	entry *singleFileFS
 	read  bool

@@ -86,6 +86,8 @@ func TestS3ObjectURL(t *testing.T) {
 		{"basic", "my-bucket", "us-east-1", "index.html", "https://my-bucket.s3.us-east-1.amazonaws.com/index.html"},
 		{"nested key", "my-bucket", "eu-west-1", "reports/q3.html", "https://my-bucket.s3.eu-west-1.amazonaws.com/reports/q3.html"},
 		{"empty region defaults", "my-bucket", "", "a.html", "https://my-bucket.s3.us-east-1.amazonaws.com/a.html"},
+		{"space in key encoded", "my-bucket", "us-east-1", "my report.html", "https://my-bucket.s3.us-east-1.amazonaws.com/my%20report.html"},
+		{"reserved chars encoded, slashes kept", "my-bucket", "us-east-1", "a b/c#d.html", "https://my-bucket.s3.us-east-1.amazonaws.com/a%20b/c%23d.html"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
