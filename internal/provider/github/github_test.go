@@ -375,6 +375,64 @@ func TestPagesMismatchWarning(t *testing.T) {
 	}
 }
 
+func TestPagesRepointNeeded(t *testing.T) {
+	tests := []struct {
+		name                          string
+		buildType, srcBranch, srcPath string
+		target                        string
+		want                          bool
+	}{
+		{"same branch root path", "legacy", "gh-pages", "/", "gh-pages", false},
+		{"same branch empty path", "legacy", "gh-pages", "", "gh-pages", false},
+		{"same branch docs path", "legacy", "gh-pages", "/docs", "gh-pages", true},
+		{"different branch", "legacy", "gh-pages", "/", "master", true},
+		{"workflow build type", "workflow", "", "", "gh-pages", true},
+		{"empty source", "legacy", "", "/", "gh-pages", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := pagesRepointNeeded(tt.buildType, tt.srcBranch, tt.srcPath, tt.target); got != tt.want {
+				t.Errorf("pagesRepointNeeded(%q, %q, %q, %q) = %v, want %v", tt.buildType, tt.srcBranch, tt.srcPath, tt.target, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestPagesSourceDesc(t *testing.T) {
+	tests := []struct {
+		name                          string
+		buildType, srcBranch, srcPath string
+		want                          string
+	}{
+		{"branch with path", "legacy", "gh-pages", "/docs", "branch gh-pages (path /docs)"},
+		{"branch empty path", "legacy", "gh-pages", "", "branch gh-pages (path /)"},
+		{"workflow", "workflow", "", "", "a GitHub Actions workflow"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := pagesSourceDesc(tt.buildType, tt.srcBranch, tt.srcPath); got != tt.want {
+				t.Errorf("pagesSourceDesc(%q, %q, %q) = %q, want %q", tt.buildType, tt.srcBranch, tt.srcPath, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestPagesRepointPrompt(t *testing.T) {
+	// Branch mismatch: shows current source, the target, and a no-default prompt.
+	branchPrompt := pagesRepointPrompt("owner/repo", "legacy", "gh-pages", "/docs", "master")
+	for _, want := range []string{"owner/repo", "branch gh-pages (path /docs)", "branch master (path /)", "Repoint Pages to 'master'?", "[y/N]"} {
+		if !strings.Contains(branchPrompt, want) {
+			t.Errorf("branch prompt missing %q, got:\n%s", want, branchPrompt)
+		}
+	}
+
+	// Workflow build type names the workflow rather than a phantom empty branch.
+	wfPrompt := pagesRepointPrompt("owner/repo", "workflow", "", "", "gh-pages")
+	if !strings.Contains(wfPrompt, "a GitHub Actions workflow") {
+		t.Errorf("workflow prompt should name the workflow source, got:\n%s", wfPrompt)
+	}
+}
+
 func TestCleanupWorkflowYAML(t *testing.T) {
 	yaml := cleanupWorkflowYAML("0 5 * * 1", 14, "gh-pages", []string{"staging", "*.keep"})
 

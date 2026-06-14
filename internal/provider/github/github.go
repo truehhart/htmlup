@@ -207,7 +207,10 @@ func (p *Provider) pagesURL(owner, repo, dir string) string {
 // on. Only a 404 from GetPagesInfo means "not enabled yet"; any other error is
 // surfaced rather than masked as "not enabled". When Pages is already on but
 // serving a different source than what we just published to, it warns loudly —
-// the upload would otherwise silently never appear.
+// the upload would otherwise silently never appear. This is publish's path: it
+// never repoints an existing config, since publish auto-detects the live source
+// (autoTarget) and must not fight an intentional setup. The setup command, which
+// is explicitly configuring the repo, uses reconcilePages to offer a repoint.
 func (p *Provider) ensurePages(ctx context.Context, client *github.Client, owner, repo, branch string) error {
 	info, _, err := client.Repositories.GetPagesInfo(ctx, owner, repo)
 	if err == nil {
@@ -219,6 +222,12 @@ func (p *Provider) ensurePages(ctx context.Context, client *github.Client, owner
 	if !is404(err) {
 		return fmt.Errorf("checking GitHub Pages status: %w", err)
 	}
+	return enablePages(ctx, client, owner, repo, branch)
+}
+
+// enablePages turns on GitHub Pages with a legacy (deploy-from-branch) source
+// rooted at the branch's top level.
+func enablePages(ctx context.Context, client *github.Client, owner, repo, branch string) error {
 	if _, _, err := client.Repositories.EnablePages(ctx, owner, repo, &github.Pages{
 		BuildType: github.Ptr("legacy"),
 		Source: &github.PagesSource{
@@ -294,19 +303,34 @@ func pagesTarget(buildType, srcBranch, srcPath string) (branch, dir string, ok b
 // serve something other than the branch we just published to, or "" if it
 // already matches. It does not change the user's Pages config — repointing
 // could clobber an intentional setup — it just stops the silent no-show.
+// Publish targets a branch (and dir), so the source path is not compared here;
+// only a workflow build or a different branch counts as a mismatch.
 func pagesMismatchWarning(buildType, srcBranch, srcPath, targetBranch string) string {
-	switch {
-	case buildType == "workflow":
-		return fmt.Sprintf("GitHub Pages builds from a GitHub Actions workflow, not a branch — "+
-			"files published to %q will not appear until you set the Pages source to that branch "+
-			"(repo Settings → Pages)", targetBranch)
-	case srcBranch != "" && srcBranch != targetBranch:
-		return fmt.Sprintf("GitHub Pages is serving %s (%s), not the %q branch this published to — "+
-			"the upload will not appear until you repoint Pages (repo Settings → Pages)",
-			srcBranch, srcPath, targetBranch)
-	default:
+	if buildType != "workflow" && (srcBranch == "" || srcBranch == targetBranch) {
 		return ""
 	}
+	return fmt.Sprintf("GitHub Pages is serving %s, not the %q branch this published to — "+
+		"the upload will not appear until you repoint Pages (repo Settings → Pages)",
+		pagesSourceDesc(buildType, srcBranch, srcPath), targetBranch)
+}
+
+// pagesSourceDesc renders a GitHub Pages source — a workflow build, or a branch
+// at a path — as a human-readable phrase. The publish-time mismatch warning and
+// the setup-time repoint prompt share it so the workflow-vs-branch wording lives
+// in one place.
+func pagesSourceDesc(buildType, srcBranch, srcPath string) string {
+	if buildType == "workflow" {
+		return "a GitHub Actions workflow"
+	}
+	return fmt.Sprintf("branch %s (path %s)", srcBranch, orSlash(srcPath))
+}
+
+// orSlash shows an empty Pages path as the root "/" it stands for.
+func orSlash(path string) string {
+	if path == "" {
+		return "/"
+	}
+	return path
 }
 
 // publishMessage builds the commit message for a publish, naming the file when
