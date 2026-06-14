@@ -1,4 +1,4 @@
-# htmlup
+# htmlup 🐊
 
 Coding agents like Claude Code often produce standalone HTML — a dashboard, a report, a quick page. Sharing that as a file is awkward: you have to send it around, and links and assets break once it leaves your machine.
 
