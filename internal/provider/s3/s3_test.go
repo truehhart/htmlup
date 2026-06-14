@@ -1,6 +1,56 @@
 package s3
 
-import "testing"
+import (
+	"testing"
+	"testing/fstest"
+)
+
+func TestCollectKeys(t *testing.T) {
+	files := fstest.MapFS{
+		"index.html":    &fstest.MapFile{Data: []byte("<html>")},
+		"css/style.css": &fstest.MapFile{Data: []byte("body{}")},
+	}
+
+	t.Run("no prefix", func(t *testing.T) {
+		entries, err := collectKeys(files, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(entries) != 2 {
+			t.Fatalf("got %d entries, want 2", len(entries))
+		}
+		// fs.WalkDir visits lexically: css/style.css before index.html.
+		if entries[0].filePath != "css/style.css" || entries[0].key != "css/style.css" {
+			t.Errorf("entries[0] = %+v, want filePath/key css/style.css", entries[0])
+		}
+		if entries[1].key != "index.html" {
+			t.Errorf("entries[1].key = %q, want index.html", entries[1].key)
+		}
+	})
+
+	t.Run("with prefix", func(t *testing.T) {
+		entries, err := collectKeys(files, "sites/demo")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if entries[0].filePath != "css/style.css" {
+			t.Errorf("entries[0].filePath = %q, want css/style.css (unprefixed source path)", entries[0].filePath)
+		}
+		if entries[0].key != "sites/demo/css/style.css" {
+			t.Errorf("entries[0].key = %q, want sites/demo/css/style.css", entries[0].key)
+		}
+	})
+
+	t.Run("empty fs", func(t *testing.T) {
+		entries, err := collectKeys(fstest.MapFS{}, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(entries) != 0 {
+			t.Errorf("got %d entries, want 0", len(entries))
+		}
+	})
+}
 
 func TestS3URL(t *testing.T) {
 	tests := []struct {

@@ -13,6 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	s3svc "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/spf13/cobra"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/truehhart/htmlup/internal/fsutil"
 	"github.com/truehhart/htmlup/internal/provider"
@@ -86,67 +87,37 @@ func (p *Provider) publish(ctx context.Context, t provider.Target) (provider.Res
 
 	client := s3svc.NewFromConfig(cfg)
 
-	var urls []string
-	err = fs.WalkDir(t.Files, ".", func(filePath string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			return nil
-		}
-
-		key := filePath
-		if p.prefix != "" {
-			key = path.Join(p.prefix, filePath)
-		}
-		objURL := s3ObjectURL(p.bucket, cfg.Region, key)
-
-		if t.DryRun {
-			fmt.Fprintf(os.Stderr, "would upload: s3://%s/%s\n", p.bucket, key)
-			urls = append(urls, objURL)
-			return nil
-		}
-
-		f, err := t.Files.Open(filePath)
-		if err != nil {
-			return err
-		}
-		defer func() { _ = f.Close() }()
-
-		stat, err := f.Stat()
-		if err != nil {
-			return err
-		}
-
-		contentType := mime.TypeByExtension(filepath.Ext(filePath))
-		if contentType == "" {
-			contentType = "application/octet-stream"
-		}
-
-		if t.Verbose {
-			fmt.Fprintf(os.Stderr, "uploading: s3://%s/%s (%s)\n", p.bucket, key, contentType)
-		}
-
-		_, err = client.PutObject(ctx, &s3svc.PutObjectInput{
-			Bucket:        aws.String(p.bucket),
-			Key:           aws.String(key),
-			Body:          f,
-			ContentType:   aws.String(contentType),
-			ContentLength: aws.Int64(stat.Size()),
-		})
-		if err != nil {
-			return fmt.Errorf("uploading %s: %w", key, err)
-		}
-
-		urls = append(urls, objURL)
-		return nil
-	})
+	entries, err := collectKeys(t.Files, p.prefix)
 	if err != nil {
 		return provider.Result{}, err
 	}
-
-	if len(urls) == 0 {
+	if len(entries) == 0 {
 		return provider.Result{}, fmt.Errorf("no files to publish")
+	}
+
+	urls := make([]string, len(entries))
+	for i, e := range entries {
+		urls[i] = s3ObjectURL(p.bucket, cfg.Region, e.key)
+	}
+
+	if t.DryRun {
+		for _, e := range entries {
+			fmt.Fprintf(os.Stderr, "would upload: s3://%s/%s\n", p.bucket, e.key)
+		}
+		return provider.Result{URLs: urls}, nil
+	}
+
+	// Upload concurrently, mirroring the GitHub backend's bounded fan-out: a
+	// 100-file site over the wire is otherwise gated on round-trip latency.
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(10)
+	for _, e := range entries {
+		g.Go(func() error {
+			return p.uploadObject(gctx, client, t.Files, e, t.Verbose)
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return provider.Result{}, err
 	}
 
 	if t.Verbose {
@@ -156,11 +127,73 @@ func (p *Provider) publish(ctx context.Context, t provider.Target) (provider.Res
 	return provider.Result{URLs: urls}, nil
 }
 
-func s3URL(bucket, region, prefix string) string {
-	if region == "" {
-		region = "us-east-1"
+type s3Entry struct {
+	// filePath is the path within the source fs.FS; key is the destination
+	// object key (filePath under the configured prefix).
+	filePath string
+	key      string
+}
+
+// collectKeys walks the source tree into the object keys to upload, applying
+// the prefix. It does not read file contents — uploadObject streams each file
+// at upload time.
+func collectKeys(files fs.FS, prefix string) ([]s3Entry, error) {
+	var entries []s3Entry
+	err := fs.WalkDir(files, ".", func(filePath string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		key := filePath
+		if prefix != "" {
+			key = path.Join(prefix, filePath)
+		}
+		entries = append(entries, s3Entry{filePath: filePath, key: key})
+		return nil
+	})
+	return entries, err
+}
+
+// uploadObject streams a single file to S3, inferring its content type from the
+// extension.
+func (p *Provider) uploadObject(ctx context.Context, client *s3svc.Client, files fs.FS, e s3Entry, verbose bool) error {
+	f, err := files.Open(e.filePath)
+	if err != nil {
+		return err
 	}
-	u := fmt.Sprintf("https://%s.s3.%s.amazonaws.com/", bucket, region)
+	defer func() { _ = f.Close() }()
+
+	stat, err := f.Stat()
+	if err != nil {
+		return err
+	}
+
+	contentType := mime.TypeByExtension(filepath.Ext(e.filePath))
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+
+	if verbose {
+		fmt.Fprintf(os.Stderr, "uploading: s3://%s/%s (%s)\n", p.bucket, e.key, contentType)
+	}
+
+	_, err = client.PutObject(ctx, &s3svc.PutObjectInput{
+		Bucket:        aws.String(p.bucket),
+		Key:           aws.String(e.key),
+		Body:          f,
+		ContentType:   aws.String(contentType),
+		ContentLength: aws.Int64(stat.Size()),
+	})
+	if err != nil {
+		return fmt.Errorf("uploading %s: %w", e.key, err)
+	}
+	return nil
+}
+
+func s3URL(bucket, region, prefix string) string {
+	u := fmt.Sprintf("https://%s.s3.%s.amazonaws.com/", bucket, regionOrDefault(region))
 	if prefix != "" {
 		u += prefix + "/"
 	}
@@ -169,8 +202,14 @@ func s3URL(bucket, region, prefix string) string {
 
 // s3ObjectURL is the virtual-hosted–style URL for a single uploaded object.
 func s3ObjectURL(bucket, region, key string) string {
+	return fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", bucket, regionOrDefault(region), key)
+}
+
+// regionOrDefault falls back to us-east-1, the region whose endpoint S3 serves
+// when none is configured.
+func regionOrDefault(region string) string {
 	if region == "" {
-		region = "us-east-1"
+		return "us-east-1"
 	}
-	return fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", bucket, region, key)
+	return region
 }
