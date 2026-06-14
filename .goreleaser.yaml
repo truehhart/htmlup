@@ -37,9 +37,10 @@ homebrew_casks:
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
     homepage: "https://github.com/truehhart/htmlup"
     description: "Upload HTML pages and make them publicly available"
+    # Omit the committer so GitHub auto-signs the API commit as the App itself,
+    # showing as verified. Relies on the tap push using a GitHub App token.
     commit_author:
-      name: goreleaser-bot
-      email: goreleaser-bot@users.noreply.github.com
+      use_github_app_token: true
     hooks:
       post:
         # The binaries aren't Apple-notarized, so strip the Gatekeeper
