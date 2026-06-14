@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"io/fs"
 	"mime"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
@@ -195,14 +197,25 @@ func (p *Provider) uploadObject(ctx context.Context, client *s3svc.Client, files
 func s3URL(bucket, region, prefix string) string {
 	u := fmt.Sprintf("https://%s.s3.%s.amazonaws.com/", bucket, regionOrDefault(region))
 	if prefix != "" {
-		u += prefix + "/"
+		u += encodeKeyPath(prefix) + "/"
 	}
 	return u
 }
 
 // s3ObjectURL is the virtual-hosted–style URL for a single uploaded object.
 func s3ObjectURL(bucket, region, key string) string {
-	return fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", bucket, regionOrDefault(region), key)
+	return fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", bucket, regionOrDefault(region), encodeKeyPath(key))
+}
+
+// encodeKeyPath percent-encodes each "/"-separated segment of an object key so
+// the emitted URL is valid for keys with spaces or reserved characters (#, ?,
+// +, non-ASCII). The S3 key itself is stored unencoded — only its URL form is.
+func encodeKeyPath(key string) string {
+	segments := strings.Split(key, "/")
+	for i, s := range segments {
+		segments[i] = url.PathEscape(s)
+	}
+	return strings.Join(segments, "/")
 }
 
 // regionOrDefault falls back to us-east-1, the region whose endpoint S3 serves
