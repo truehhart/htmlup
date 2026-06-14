@@ -1,6 +1,7 @@
 package github
 
 import (
+	"bufio"
 	"context"
 	_ "embed"
 	"fmt"
@@ -23,6 +24,7 @@ func (p *Provider) setupCmd() *cobra.Command {
 	var (
 		dryRun  bool
 		verbose bool
+		force   bool
 	)
 	cmd := &cobra.Command{
 		Use:   "setup",
@@ -37,7 +39,7 @@ func (p *Provider) setupCmd() *cobra.Command {
 			if err := p.validateSetup(); err != nil {
 				return err
 			}
-			result, err := p.setup(cmd.Context(), dryRun, verbose)
+			result, err := p.setup(cmd.Context(), dryRun, verbose, force)
 			if err != nil {
 				return err
 			}
@@ -54,6 +56,7 @@ func (p *Provider) setupCmd() *cobra.Command {
 	cmd.Flags().StringSliceVar(&p.exclude, "exclude", nil, "extra top-level entries the cleanup never deletes; globs match the entry name, so a directory is its bare name, e.g. 'drafts' not 'drafts/*' (repeatable or comma-separated)")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show what would be done without writing")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "per-step progress and SDK detail")
+	cmd.Flags().BoolVar(&force, "force", false, "repoint GitHub Pages to --branch without prompting if it already serves a different source")
 	return cmd
 }
 
@@ -84,7 +87,7 @@ func (p *Provider) validateSetup() error {
 	return nil
 }
 
-func (p *Provider) setup(ctx context.Context, dryRun, verbose bool) (provider.Result, error) {
+func (p *Provider) setup(ctx context.Context, dryRun, verbose, force bool) (provider.Result, error) {
 	owner, repoName := p.ownerRepo()
 
 	token, err := resolveToken(ctx)
@@ -103,7 +106,7 @@ func (p *Provider) setup(ctx context.Context, dryRun, verbose bool) (provider.Re
 		if p.cname != "" {
 			fmt.Fprintf(os.Stderr, "would write CNAME for custom domain %s\n", p.cname)
 		}
-		fmt.Fprintf(os.Stderr, "would enable GitHub Pages (branch %s, path /)\n", p.branch)
+		fmt.Fprintf(os.Stderr, "would enable GitHub Pages, or repoint it to branch %s (path /) if it serves a different source\n", p.branch)
 		fmt.Fprintf(os.Stderr, "would install %s to the default branch (cron %q, ttl %d days)\n", cleanupWorkflowPath, p.cron, p.ttlDays)
 		return provider.Result{URLs: []string{url}}, nil
 	}
@@ -143,8 +146,9 @@ func (p *Provider) setup(ctx context.Context, dryRun, verbose bool) (provider.Re
 		fmt.Fprintf(os.Stderr, "landing commit: %s\n", landingCommit.GetSHA())
 	}
 
-	// 3. Enable Pages on the bootstrapped branch (now that it exists).
-	if err := p.ensurePages(ctx, client, owner, repoName, p.branch); err != nil {
+	// 3. Enable Pages on the bootstrapped branch (now that it exists), or offer
+	// to repoint it there if Pages already serves a different source.
+	if err := p.reconcilePages(ctx, client, owner, repoName, p.branch, force); err != nil {
 		return provider.Result{}, err
 	}
 	if verbose {
@@ -160,6 +164,100 @@ func (p *Provider) defaultBranch(ctx context.Context, client *github.Client, own
 		return "", fmt.Errorf("getting repository %s: %w", p.repo, err)
 	}
 	return r.GetDefaultBranch(), nil
+}
+
+// reconcilePages makes GitHub Pages serve from the bootstrapped branch. If Pages
+// is off, it enables it. If Pages is already on but serving a different source
+// (another branch, or a GitHub Actions workflow), it offers to repoint — gated
+// behind a confirmation prompt so an intentional config is never clobbered
+// silently. --force (or a "yes") repoints; declining (or a non-interactive run)
+// leaves the config alone and warns that the upload may not appear.
+func (p *Provider) reconcilePages(ctx context.Context, client *github.Client, owner, repo, branch string, force bool) error {
+	info, _, err := client.Repositories.GetPagesInfo(ctx, owner, repo)
+	if is404(err) {
+		return enablePages(ctx, client, owner, repo, branch) // not enabled yet
+	}
+	if err != nil {
+		return fmt.Errorf("checking GitHub Pages status: %w", err)
+	}
+
+	buildType := info.GetBuildType()
+	srcBranch := info.GetSource().GetBranch()
+	srcPath := info.GetSource().GetPath()
+	if !pagesRepointNeeded(buildType, srcBranch, srcPath, branch) {
+		return nil // already serving the branch + root path setup targets
+	}
+
+	if !force && !confirmRepoint(pagesRepointPrompt(p.repo, buildType, srcBranch, srcPath, branch)) {
+		fmt.Fprintf(os.Stderr, "warning: left GitHub Pages pointed at its current source; "+
+			"the landing page published to %q may not appear until you repoint Pages "+
+			"(repo Settings → Pages, or re-run setup with --force)\n", branch)
+		return nil
+	}
+
+	// Preserve any custom domain: PagesUpdate.CNAME has no omitempty, so a nil
+	// pointer serializes as "cname":null, which removes the domain. Carry the
+	// requested --cname, else whatever Pages already has, so the repoint changes
+	// only the source branch.
+	cname := info.GetCNAME()
+	if p.cname != "" {
+		cname = p.cname
+	}
+	update := &github.PagesUpdate{
+		Source: &github.PagesSource{Branch: github.Ptr(branch), Path: github.Ptr("/")},
+	}
+	if cname != "" {
+		update.CNAME = github.Ptr(cname)
+	}
+	if _, err := client.Repositories.UpdatePages(ctx, owner, repo, update); err != nil {
+		return fmt.Errorf("repointing GitHub Pages to %q: %w", branch, err)
+	}
+	return nil
+}
+
+// pagesRepointNeeded reports whether Pages serves something other than what
+// setup targets — the bootstrapped branch at the root path. A GitHub Actions
+// workflow source, a different branch, or a non-root path all need a repoint;
+// GitHub allows only "/" or "/docs", and setup always publishes the landing
+// page to "/", so any non-"/" path (i.e. "/docs") leaves it unserved.
+func pagesRepointNeeded(buildType, srcBranch, srcPath, targetBranch string) bool {
+	return buildType == "workflow" || srcBranch != targetBranch || orSlash(srcPath) != "/"
+}
+
+// pagesRepointPrompt renders the current-vs-requested Pages source as a y/N
+// confirmation. Default is no — a bare Enter declines.
+func pagesRepointPrompt(repo, buildType, srcBranch, srcPath, targetBranch string) string {
+	return fmt.Sprintf(
+		"⚠  GitHub Pages source mismatch on %s\n\n"+
+			"      current:  %s\n"+
+			"      setup:    %s\n\n"+
+			"Repoint Pages to '%s'? This can be changed later [y/N]: ",
+		repo,
+		pagesSourceDesc(buildType, srcBranch, srcPath),
+		pagesSourceDesc("legacy", targetBranch, "/"),
+		targetBranch,
+	)
+}
+
+// confirmRepoint prompts on stderr and reads a y/N answer from stdin, defaulting
+// to no. It returns false without prompting when stdin is not a terminal (CI,
+// piped input), so an unattended setup never blocks waiting on input — the
+// caller falls back to a warning instead.
+func confirmRepoint(prompt string) bool {
+	if fi, err := os.Stdin.Stat(); err != nil || fi.Mode()&os.ModeCharDevice == 0 {
+		return false
+	}
+	fmt.Fprint(os.Stderr, prompt)
+	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+	if err != nil {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(line)) {
+	case "y", "yes":
+		return true
+	default:
+		return false
+	}
 }
 
 // helloWorldTemplate / cleanupWorkflowTemplate are the real HTML and YAML files
