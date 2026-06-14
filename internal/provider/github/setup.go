@@ -33,6 +33,9 @@ func (p *Provider) setupCmd() *cobra.Command {
 			"to the Pages branch, and install an opt-in cron cleanup workflow on the default branch.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			// Flags parsed cleanly; from here errors are runtime failures, not
+			// misuse, so don't tack the usage screen onto them.
+			cmd.SilenceUsage = true
 			if err := p.validate(); err != nil {
 				return err
 			}

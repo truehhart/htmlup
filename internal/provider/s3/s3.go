@@ -52,6 +52,9 @@ func (p *Provider) publishCmd() *cobra.Command {
 		Short: "Publish HTML to S3",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Flags parsed cleanly; from here errors are runtime failures, not
+			// misuse, so don't tack the usage screen onto them.
+			cmd.SilenceUsage = true
 			files, err := fsutil.ResolveFS(args[0])
 			if err != nil {
 				return err
