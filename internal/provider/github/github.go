@@ -265,7 +265,19 @@ func (p *Provider) autoTarget(ctx context.Context, client *github.Client, owner,
 	if !ok {
 		return "", "", "", false
 	}
-	return branch, dir, info.GetHTMLURL(), true
+	// GitHub returns html_url without a trailing slash for project sites (e.g.
+	// https://owner.github.io/repo). servedURL builds links as base+path, so the
+	// base must end in "/" or the per-file URLs come out glued (…/repostyle.css).
+	return branch, dir, ensureSlash(info.GetHTMLURL()), true
+}
+
+// ensureSlash guarantees a non-empty URL ends with "/", so it is safe to use as
+// a base that path segments are appended to.
+func ensureSlash(u string) string {
+	if u == "" || strings.HasSuffix(u, "/") {
+		return u
+	}
+	return u + "/"
 }
 
 // pagesTarget maps a GitHub Pages branch source to a publish target. ok is false

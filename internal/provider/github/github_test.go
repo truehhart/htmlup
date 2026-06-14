@@ -233,6 +233,43 @@ func TestPublishedURLs(t *testing.T) {
 	}
 }
 
+func TestServedURL(t *testing.T) {
+	const base = "https://owner.github.io/repo/"
+	tests := []struct {
+		name      string
+		entryPath string
+		dir       string
+		want      string
+	}{
+		{"plain file", "style.css", "", base + "style.css"},
+		{"index collapses to root", "index.html", "", base},
+		{"nested index collapses to its dir", "reports/index.html", "", base + "reports/"},
+		{"strips source dir", "docs/page.html", "docs", base + "page.html"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := servedURL(base, tt.entryPath, tt.dir); got != tt.want {
+				t.Errorf("servedURL() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestEnsureSlash(t *testing.T) {
+	// The auto-detect path feeds GitHub's html_url (no trailing slash for project
+	// sites) into servedURL, whose base must end in "/".
+	tests := []struct{ in, want string }{
+		{"https://owner.github.io/repo", "https://owner.github.io/repo/"},
+		{"https://owner.github.io/repo/", "https://owner.github.io/repo/"},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		if got := ensureSlash(tt.in); got != tt.want {
+			t.Errorf("ensureSlash(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
 func TestPagesTarget(t *testing.T) {
 	tests := []struct {
 		name                          string
@@ -253,6 +290,56 @@ func TestPagesTarget(t *testing.T) {
 					branch, dir, ok, tt.wantBranch, tt.wantDir, tt.wantOK)
 			}
 		})
+	}
+}
+
+func TestValidateSetup(t *testing.T) {
+	base := func() *Provider {
+		return &Provider{repo: "o/r", branch: "gh-pages", cron: "0 3 * * 0", ttlDays: 30}
+	}
+	tests := []struct {
+		name    string
+		mutate  func(*Provider)
+		wantErr bool
+	}{
+		{"defaults ok", func(*Provider) {}, false},
+		{"ttl zero rejected", func(p *Provider) { p.ttlDays = 0 }, true},
+		{"ttl negative rejected", func(p *Provider) { p.ttlDays = -1 }, true},
+		{"ttl one ok", func(p *Provider) { p.ttlDays = 1 }, false},
+		{"cron with spaces ok", func(p *Provider) { p.cron = "*/5 * * * *" }, false},
+		{"newline in branch rejected", func(p *Provider) { p.branch = "main\nfoo: bar" }, true},
+		{"newline in cron rejected", func(p *Provider) { p.cron = "0 3 * * 0\nx" }, true},
+		{"exclude with space rejected", func(p *Provider) { p.exclude = []string{"* secret"} }, true},
+		{"plain exclude globs ok", func(p *Provider) { p.exclude = []string{"drafts", "*.keep"} }, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := base()
+			tt.mutate(p)
+			if err := p.validateSetup(); (err != nil) != tt.wantErr {
+				t.Errorf("validateSetup() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestYAMLSingleQuoted(t *testing.T) {
+	if got := yamlSingleQuoted("0 3 * * 0"); got != "0 3 * * 0" {
+		t.Errorf("clean value changed: %q", got)
+	}
+	// An embedded quote must be doubled so it can't terminate the scalar.
+	if got := yamlSingleQuoted("a'b"); got != "a''b" {
+		t.Errorf("yamlSingleQuoted(a'b) = %q, want a''b", got)
+	}
+}
+
+func TestHelloWorldHTMLEscapes(t *testing.T) {
+	html := helloWorldHTML(30, "o/r<script>alert(1)</script>", "https://o.github.io/r")
+	if strings.Contains(html, "<script>alert(1)</script>") {
+		t.Error("repo value was interpolated as raw HTML — should be escaped")
+	}
+	if !strings.Contains(html, "&lt;script&gt;") {
+		t.Error("expected the repo value to be HTML-escaped")
 	}
 }
 
@@ -311,7 +398,7 @@ func TestCleanupWorkflowYAML(t *testing.T) {
 		"shell: bash -euo pipefail {0}",                                      // explicit hardened shell
 		`name: '[Cleanup] | Remove entries older than TTL'`,                  // [TYPE] | Action naming
 		"run-name: htmlup-cleanup (older than 14d)",                          // dynamic run-name
-		"git ls-tree --name-only HEAD",                                       // inlined cleanup.sh body
+		"git -c core.quotepath=false ls-tree -z --name-only HEAD",            // inlined cleanup.sh body
 		"git log -1 --format=%ct",
 		"createCommitOnBranch", // signed commit via the GitHub API
 	}
@@ -587,8 +674,10 @@ func TestCleanupScript(t *testing.T) {
 	git(nil, "config", "user.email", "test@example.com")
 	git(nil, "config", "user.name", "test")
 
-	// Old entries (committed in the past): some protected, some not.
-	for _, f := range []string{"index.html", "stale.html", "keep.html", "notes.keep", "staging/x.html", "archive/y.html"} {
+	// Old entries (committed in the past): some protected, some not. "café.html"
+	// is non-ASCII on purpose — git C-quotes such names by default, which the
+	// loop must decode or it would silently never clean them up.
+	for _, f := range []string{"index.html", "stale.html", "café.html", "keep.html", "notes.keep", "staging/x.html", "archive/y.html"} {
 		write(f, "old")
 	}
 	git(nil, "add", "-A")
@@ -615,7 +704,7 @@ func TestCleanupScript(t *testing.T) {
 
 	// Stale, non-excluded entries are staged for deletion (gone from the tree);
 	// everything else survives.
-	for _, gone := range []string{"stale.html", "archive"} {
+	for _, gone := range []string{"stale.html", "café.html", "archive"} {
 		if exists(gone) {
 			t.Errorf("expected %q to be deleted", gone)
 		}
