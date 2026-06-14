@@ -91,11 +91,20 @@ func (p *Provider) publishCmd() *cobra.Command {
 }
 
 func (p *Provider) validate() error {
-	parts := strings.SplitN(p.repo, "/", 2)
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+	if _, _, ok := splitRepo(p.repo); !ok {
 		return fmt.Errorf("--repo must be in owner/name format")
 	}
 	return nil
+}
+
+// splitRepo parses an "owner/name" repo string. ok is false when either side is
+// missing, which validate() turns into the user-facing error.
+func splitRepo(repo string) (owner, name string, ok bool) {
+	parts := strings.SplitN(repo, "/", 2)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return "", "", false
+	}
+	return parts[0], parts[1], true
 }
 
 func (p *Provider) publish(ctx context.Context, t provider.Target, autoDetect bool) (provider.Result, error) {
@@ -106,24 +115,24 @@ func (p *Provider) publish(ctx context.Context, t provider.Target, autoDetect bo
 		return provider.Result{}, err
 	}
 
-	client := github.NewClient(
-		oauth2.NewClient(ctx, oauth2.StaticTokenSource(
-			&oauth2.Token{AccessToken: token},
-		)),
-	)
+	client := newGitHubClient(ctx, token)
 
-	// Unless told otherwise, target wherever GitHub Pages already serves from
-	// (its branch + source path). Falls back to the flag defaults when Pages is
+	// Resolve the publish target into locals rather than mutating the receiver:
+	// unless told otherwise, target wherever GitHub Pages already serves from
+	// (its branch + source path), falling back to the flag values when Pages is
 	// off or built from a workflow.
+	branch, dir := p.branch, p.dir
 	var autoURL string
 	if autoDetect {
-		autoURL = p.applyAutoTarget(ctx, client, owner, repoName)
-		if autoURL != "" && t.Verbose {
-			fmt.Fprintf(os.Stderr, "auto-detected Pages source: branch %s, dir %q\n", p.branch, p.dir)
+		if b, d, u, ok := p.autoTarget(ctx, client, owner, repoName); ok {
+			branch, dir, autoURL = b, d, u
+			if t.Verbose {
+				fmt.Fprintf(os.Stderr, "auto-detected Pages source: branch %s, dir %q\n", branch, dir)
+			}
 		}
 	}
 
-	entries, err := collectFiles(t.Files, p.dir)
+	entries, err := collectFiles(t.Files, dir)
 	if err != nil {
 		return provider.Result{}, fmt.Errorf("reading files: %w", err)
 	}
@@ -137,24 +146,24 @@ func (p *Provider) publish(ctx context.Context, t provider.Target, autoDetect bo
 	// merges onto the branch's tree, so any existing CNAME is left untouched.
 	// The site root, then the URL of the page to hand back (the file itself for
 	// a single non-index page).
-	siteURL := p.pagesURL(owner, repoName)
+	siteURL := p.pagesURL(owner, repoName, dir)
 	if autoURL != "" {
 		siteURL = autoURL
 	}
-	if domain := readCNAME(ctx, client, owner, repoName, p.branch, p.dir); domain != "" {
+	if domain := readCNAME(ctx, client, owner, repoName, branch, dir); domain != "" {
 		siteURL = "https://" + domain + "/"
 	}
-	urls := publishedURLs(siteURL, entries, p.dir)
+	urls := publishedURLs(siteURL, entries, dir)
 
 	if t.DryRun {
-		fmt.Fprintf(os.Stderr, "dry run — would publish %s to %s (branch %s%s):\n", entrySummary(entries, p.dir), p.repo, p.branch, dirNote(p.dir))
+		fmt.Fprintf(os.Stderr, "dry run — would publish %s to %s (branch %s%s):\n", entrySummary(entries, dir), p.repo, branch, dirNote(dir))
 		for _, u := range urls {
 			fmt.Fprintf(os.Stderr, "  → %s\n", u)
 		}
 		return provider.Result{URLs: urls}, nil
 	}
 
-	newCommit, err := pushCommit(ctx, client, owner, repoName, p.branch, publishMessage(entries), entries, t.Verbose)
+	newCommit, err := pushCommit(ctx, client, owner, repoName, branch, publishMessage(entries), entries, t.Verbose)
 	if err != nil {
 		return provider.Result{}, err
 	}
@@ -164,21 +173,21 @@ func (p *Provider) publish(ctx context.Context, t provider.Target, autoDetect bo
 
 	// Best-effort for publish: the upload already succeeded, so a Pages-enable
 	// hiccup is a warning, not a failure.
-	if err := p.ensurePages(ctx, client, owner, repoName); err != nil {
+	if err := p.ensurePages(ctx, client, owner, repoName, branch); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: %v\n", err)
 	}
 
 	// Friendly summary on stderr; the bare per-file URLs go to stdout for piping.
-	fmt.Fprintf(os.Stderr, "✓ published %s to %s (branch %s%s)\n", entrySummary(entries, p.dir), p.repo, p.branch, dirNote(p.dir))
+	fmt.Fprintf(os.Stderr, "✓ published %s to %s (branch %s%s)\n", entrySummary(entries, dir), p.repo, branch, dirNote(dir))
 	return provider.Result{URLs: urls}, nil
 }
 
 func (p *Provider) ownerRepo() (string, string) {
-	parts := strings.SplitN(p.repo, "/", 2)
-	return parts[0], parts[1]
+	owner, name, _ := splitRepo(p.repo)
+	return owner, name
 }
 
-func (p *Provider) pagesURL(owner, repo string) string {
+func (p *Provider) pagesURL(owner, repo, dir string) string {
 	var u string
 	switch {
 	case p.cname != "":
@@ -188,8 +197,8 @@ func (p *Provider) pagesURL(owner, repo string) string {
 	default:
 		u = "https://" + owner + ".github.io/" + repo + "/"
 	}
-	if p.dir != "" {
-		u += p.dir + "/"
+	if dir != "" {
+		u += dir + "/"
 	}
 	return u
 }
@@ -199,22 +208,21 @@ func (p *Provider) pagesURL(owner, repo string) string {
 // surfaced rather than masked as "not enabled". When Pages is already on but
 // serving a different source than what we just published to, it warns loudly —
 // the upload would otherwise silently never appear.
-func (p *Provider) ensurePages(ctx context.Context, client *github.Client, owner, repo string) error {
+func (p *Provider) ensurePages(ctx context.Context, client *github.Client, owner, repo, branch string) error {
 	info, _, err := client.Repositories.GetPagesInfo(ctx, owner, repo)
 	if err == nil {
-		if w := pagesMismatchWarning(info.GetBuildType(), info.GetSource().GetBranch(), info.GetSource().GetPath(), p.branch); w != "" {
+		if w := pagesMismatchWarning(info.GetBuildType(), info.GetSource().GetBranch(), info.GetSource().GetPath(), branch); w != "" {
 			fmt.Fprintf(os.Stderr, "warning: %s\n", w)
 		}
 		return nil // already enabled
 	}
-	var ghErr *github.ErrorResponse
-	if !errors.As(err, &ghErr) || ghErr.Response.StatusCode != 404 {
+	if !is404(err) {
 		return fmt.Errorf("checking GitHub Pages status: %w", err)
 	}
 	if _, _, err := client.Repositories.EnablePages(ctx, owner, repo, &github.Pages{
 		BuildType: github.Ptr("legacy"),
 		Source: &github.PagesSource{
-			Branch: github.Ptr(p.branch),
+			Branch: github.Ptr(branch),
 			Path:   github.Ptr("/"),
 		},
 	}); err != nil {
@@ -242,22 +250,22 @@ func readCNAME(ctx context.Context, client *github.Client, owner, repo, branch, 
 	return strings.TrimSpace(content)
 }
 
-// applyAutoTarget points the publish at wherever GitHub Pages already serves
-// from, overriding branch/dir. It returns the live Pages URL on success, or ""
-// (leaving the flag defaults untouched) when Pages is off, built from a
-// workflow, or otherwise can't be read.
-func (p *Provider) applyAutoTarget(ctx context.Context, client *github.Client, owner, repo string) string {
+// autoTarget reports wherever GitHub Pages already serves from, so publish can
+// target it instead of the flag defaults. ok is false (and the caller keeps its
+// defaults) when Pages is off, built from a workflow, or otherwise can't be
+// read. url is the live Pages URL, which may be empty even when ok. It reads
+// only — resolving the target is the caller's job, so nothing on the provider
+// is mutated.
+func (p *Provider) autoTarget(ctx context.Context, client *github.Client, owner, repo string) (branch, dir, url string, ok bool) {
 	info, _, err := client.Repositories.GetPagesInfo(ctx, owner, repo)
 	if err != nil {
-		return ""
+		return "", "", "", false
 	}
-	branch, dir, ok := pagesTarget(info.GetBuildType(), info.GetSource().GetBranch(), info.GetSource().GetPath())
+	branch, dir, ok = pagesTarget(info.GetBuildType(), info.GetSource().GetBranch(), info.GetSource().GetPath())
 	if !ok {
-		return ""
+		return "", "", "", false
 	}
-	p.branch = branch
-	p.dir = dir
-	return info.GetHTMLURL()
+	return branch, dir, info.GetHTMLURL(), true
 }
 
 // pagesTarget maps a GitHub Pages branch source to a publish target. ok is false
@@ -365,11 +373,15 @@ func pushCommit(
 	g.SetLimit(10)
 	for i, e := range entries {
 		g.Go(func() error {
+			data, err := e.read()
+			if err != nil {
+				return fmt.Errorf("reading %s: %w", e.path, err)
+			}
 			if verbose {
-				fmt.Fprintf(os.Stderr, "creating blob: %s (%d bytes)\n", e.path, len(e.content))
+				fmt.Fprintf(os.Stderr, "creating blob: %s (%d bytes)\n", e.path, len(data))
 			}
 			blob, _, err := client.Git.CreateBlob(gctx, owner, repo, &github.Blob{
-				Content:  github.Ptr(base64.StdEncoding.EncodeToString(e.content)),
+				Content:  github.Ptr(base64.StdEncoding.EncodeToString(data)),
 				Encoding: github.Ptr("base64"),
 			})
 			if err != nil {
@@ -391,8 +403,7 @@ func pushCommit(
 	ref, _, err := client.Git.GetRef(ctx, owner, repo, "refs/heads/"+branch)
 	var branchExists bool
 	if err != nil {
-		var ghErr *github.ErrorResponse
-		if !errors.As(err, &ghErr) || ghErr.Response.StatusCode != 404 {
+		if !is404(err) {
 			return nil, fmt.Errorf("checking branch %s: %w", branch, err)
 		}
 	} else {
@@ -453,10 +464,24 @@ func pushCommit(
 }
 
 type fileEntry struct {
-	path    string
-	content []byte
+	path string
+	// read returns the entry's bytes. publish reads from the source fs lazily at
+	// blob-creation time (see collectFiles) so a large tree isn't held in memory
+	// all at once; setup supplies already-materialized content via staticContent.
+	read func() ([]byte, error)
 }
 
+// staticContent adapts already-materialized bytes — setup's synthesized landing
+// page, CNAME, and workflow — to the lazy fileEntry.read contract.
+func staticContent(b []byte) func() ([]byte, error) {
+	return func() ([]byte, error) { return b, nil }
+}
+
+// collectFiles enumerates the tree into entries that read their bytes lazily.
+// Only the path list is materialized here; each file's content is read inside
+// pushCommit's bounded upload loop, so peak memory is ~concurrency×file rather
+// than the whole tree. (GitHub's blob API still needs each individual file
+// fully in memory to base64-encode it — that per-file floor is unavoidable.)
 func collectFiles(files fs.FS, dir string) ([]fileEntry, error) {
 	var entries []fileEntry
 	err := fs.WalkDir(files, ".", func(p string, d fs.DirEntry, err error) error {
@@ -466,18 +491,36 @@ func collectFiles(files fs.FS, dir string) ([]fileEntry, error) {
 		if d.IsDir() {
 			return nil
 		}
-		data, err := fs.ReadFile(files, p)
-		if err != nil {
-			return err
-		}
 		remotePath := p
 		if dir != "" {
 			remotePath = path.Join(dir, p)
 		}
-		entries = append(entries, fileEntry{path: remotePath, content: data})
+		// p is the callback's own parameter (not a shared loop variable), so the
+		// closure safely captures this entry's source path.
+		entries = append(entries, fileEntry{
+			path: remotePath,
+			read: func() ([]byte, error) { return fs.ReadFile(files, p) },
+		})
 		return nil
 	})
 	return entries, err
+}
+
+// newGitHubClient builds a token-authenticated GitHub client. Auth is owned by
+// go-github + oauth2 — see resolveToken for where the token comes from.
+func newGitHubClient(ctx context.Context, token string) *github.Client {
+	return github.NewClient(
+		oauth2.NewClient(ctx, oauth2.StaticTokenSource(
+			&oauth2.Token{AccessToken: token},
+		)),
+	)
+}
+
+// is404 reports whether err is a GitHub API "not found" response, the signal
+// that a resource (a Pages config, a branch ref) does not exist yet.
+func is404(err error) bool {
+	var ghErr *github.ErrorResponse
+	return errors.As(err, &ghErr) && ghErr.Response.StatusCode == 404
 }
 
 func resolveToken(ctx context.Context) (string, error) {
