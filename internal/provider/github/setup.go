@@ -4,6 +4,7 @@ import (
 	"context"
 	_ "embed"
 	"fmt"
+	"html"
 	"os"
 	"strconv"
 	"strings"
@@ -33,6 +34,9 @@ func (p *Provider) setupCmd() *cobra.Command {
 			if err := p.validate(); err != nil {
 				return err
 			}
+			if err := p.validateSetup(); err != nil {
+				return err
+			}
 			result, err := p.setup(cmd.Context(), dryRun, verbose)
 			if err != nil {
 				return err
@@ -51,6 +55,33 @@ func (p *Provider) setupCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show what would be done without writing")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "per-step progress and SDK detail")
 	return cmd
+}
+
+// validateSetup guards the values baked into the generated cleanup workflow and
+// landing page, which publish never touches. Catches three foot-guns: a TTL
+// that would delete everything on the first run, whitespace in an --exclude
+// entry (cleanup.sh word-splits EXCLUDE_PATTERNS, so " " or a bare "*" would
+// disable all deletion), and newlines that would break out of the single-quoted
+// YAML scalars they're interpolated into.
+func (p *Provider) validateSetup() error {
+	if p.ttlDays < 1 {
+		return fmt.Errorf("--ttl-days must be at least 1 (got %d); a smaller value deletes every published file on the first cleanup run", p.ttlDays)
+	}
+	for _, f := range []struct{ name, val string }{
+		{"--branch", p.branch},
+		{"--cron", p.cron},
+		{"--cname", p.cname},
+	} {
+		if strings.ContainsAny(f.val, "\n\r") {
+			return fmt.Errorf("%s must not contain newlines", f.name)
+		}
+	}
+	for _, e := range p.exclude {
+		if strings.ContainsAny(e, " \t\n\r") {
+			return fmt.Errorf("--exclude entries must each be a single whitespace-free glob (got %q)", e)
+		}
+	}
+	return nil
 }
 
 func (p *Provider) setup(ctx context.Context, dryRun, verbose bool) (provider.Result, error) {
@@ -156,8 +187,8 @@ var cleanupScript string
 func helloWorldHTML(ttlDays int, repo, url string) string {
 	r := strings.NewReplacer(
 		"{{TTL_DAYS}}", strconv.Itoa(ttlDays),
-		"{{REPO}}", repo,
-		"{{URL}}", url,
+		"{{REPO}}", html.EscapeString(repo),
+		"{{URL}}", html.EscapeString(url),
 	)
 	return r.Replace(helloWorldTemplate)
 }
@@ -167,11 +198,15 @@ func helloWorldHTML(ttlDays int, repo, url string) string {
 // any extra exclude globs the cleanup must never delete. The cleanup logic
 // itself is inlined from cleanup.sh.
 func cleanupWorkflowYAML(cron string, ttlDays int, branch string, exclude []string) string {
+	// cron/branch/exclude land inside single-quoted YAML scalars; double any
+	// embedded single quote so a value can't terminate the scalar and inject
+	// sibling workflow keys. (validateSetup already rejects newlines, the other
+	// way out of a scalar.) TTL is an int, so it needs no escaping.
 	r := strings.NewReplacer(
-		"{{CRON}}", cron,
+		"{{CRON}}", yamlSingleQuoted(cron),
 		"{{TTL_DAYS}}", strconv.Itoa(ttlDays),
-		"{{BRANCH}}", branch,
-		"{{EXCLUDE}}", cleanupExcludePattern(exclude),
+		"{{BRANCH}}", yamlSingleQuoted(branch),
+		"{{EXCLUDE}}", yamlSingleQuoted(cleanupExcludePattern(exclude)),
 		"{{CLEANUP_SCRIPT}}", indentScript(cleanupScript, scriptIndent(cleanupWorkflowTemplate)),
 	)
 	return r.Replace(cleanupWorkflowTemplate)
@@ -188,6 +223,12 @@ func cleanupExcludePattern(extra []string) string {
 		}
 	}
 	return strings.Join(patterns, " ")
+}
+
+// yamlSingleQuoted escapes a value for embedding inside a single-quoted YAML
+// scalar by doubling each single quote, YAML's own escape for that context.
+func yamlSingleQuoted(s string) string {
+	return strings.ReplaceAll(s, "'", "''")
 }
 
 // scriptIndent returns the leading-space width of the line holding the

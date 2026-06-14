@@ -40,7 +40,7 @@ excluded() {
   return 1
 }
 
-while IFS= read -r entry; do
+while IFS= read -r -d '' entry; do
   [ -n "$entry" ] || continue
   excluded "$entry" && continue
   last=$(git log -1 --format=%ct -- "$entry")
@@ -49,7 +49,10 @@ while IFS= read -r entry; do
     echo "removing stale entry: $entry (last commit epoch $last)"
     git rm -r --quiet -- "$entry"
   fi
-done < <(git ls-tree --name-only HEAD)
+  # NUL-delimited and unquoted (quotepath=false) so entries with spaces,
+  # newlines, or non-ASCII names match their real path instead of git's
+  # C-quoted form — otherwise those entries would never be cleaned up.
+done < <(git -c core.quotepath=false ls-tree -z --name-only HEAD)
 
 # git rm -r expands directories into individual file paths, which is what the
 # API deletion list needs. Kept as a newline-separated string (not a bash array)
