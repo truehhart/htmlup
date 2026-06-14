@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net/http"
 	"os"
 	"os/exec"
 	"path"
@@ -58,6 +59,9 @@ func (p *Provider) publishCmd() *cobra.Command {
 		Short: "Publish HTML to GitHub Pages",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Flags parsed cleanly; from here errors are runtime failures, not
+			// misuse, so don't tack the usage screen onto them.
+			cmd.SilenceUsage = true
 			if err := p.validate(); err != nil {
 				return err
 			}
@@ -225,19 +229,70 @@ func (p *Provider) ensurePages(ctx context.Context, client *github.Client, owner
 	return enablePages(ctx, client, owner, repo, branch)
 }
 
+// pagesEnableAttempts is the total number of times enablePages POSTs before
+// giving up (one initial try plus retries).
+const pagesEnableAttempts = 4
+
 // enablePages turns on GitHub Pages with a legacy (deploy-from-branch) source
 // rooted at the branch's top level.
+//
+// The enable endpoint (POST /repos/.../pages) intermittently returns an opaque
+// 500 — most often when called right after the source branch was just created,
+// which is exactly what setup does. The write usually lands server-side despite
+// the 500, so we retry with a short backoff and treat an "already enabled" 409
+// (a prior 500 that actually took, or a concurrent enable) as success. Only 5xx
+// is retried; any other error fails fast.
 func enablePages(ctx context.Context, client *github.Client, owner, repo, branch string) error {
-	if _, _, err := client.Repositories.EnablePages(ctx, owner, repo, &github.Pages{
+	pages := &github.Pages{
 		BuildType: github.Ptr("legacy"),
 		Source: &github.PagesSource{
 			Branch: github.Ptr(branch),
 			Path:   github.Ptr("/"),
 		},
-	}); err != nil {
-		return fmt.Errorf("enabling GitHub Pages: %w", err)
 	}
-	return nil
+
+	var lastErr error
+	for attempt := 1; attempt <= pagesEnableAttempts; attempt++ {
+		if attempt > 1 {
+			fmt.Fprintf(os.Stderr, "GitHub Pages enable returned a server error; retrying (%d/%d)...\n",
+				attempt, pagesEnableAttempts)
+			if err := sleep(ctx, pagesEnableBackoff(attempt)); err != nil {
+				return err
+			}
+		}
+		_, _, err := client.Repositories.EnablePages(ctx, owner, repo, pages)
+		switch {
+		case err == nil, isStatus(err, http.StatusConflict):
+			return nil // created, or a prior attempt already enabled it
+		case !isServerError(err):
+			return fmt.Errorf("enabling GitHub Pages: %w", err) // not a transient 5xx
+		default:
+			lastErr = err
+		}
+	}
+	return fmt.Errorf("enabling GitHub Pages: GitHub returned a server error %d times in a row.\n"+
+		"This endpoint is intermittently flaky right after a branch is created; Pages may already be "+
+		"enabled (check %s/settings/pages) — otherwise re-running setup usually succeeds: %w",
+		pagesEnableAttempts, "https://github.com/"+owner+"/"+repo, lastErr)
+}
+
+// pagesEnableBackoff returns the wait before retry attempt n (2-based, since the
+// first attempt has no wait): 1s, 2s, 3s — enough to outlast the brief window
+// where a freshly created branch isn't yet visible to the Pages backend.
+func pagesEnableBackoff(attempt int) time.Duration {
+	return time.Duration(attempt-1) * time.Second
+}
+
+// sleep waits for d or until ctx is cancelled, whichever comes first.
+func sleep(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
 }
 
 // readCNAME returns the custom domain from a CNAME file at the target's source
@@ -552,11 +607,33 @@ func newGitHubClient(ctx context.Context, token string) *github.Client {
 	)
 }
 
+// httpStatus extracts the HTTP status code from a GitHub API error, reporting
+// false when err is not a *github.ErrorResponse (e.g. a transport error).
+func httpStatus(err error) (int, bool) {
+	var ghErr *github.ErrorResponse
+	if errors.As(err, &ghErr) && ghErr.Response != nil {
+		return ghErr.Response.StatusCode, true
+	}
+	return 0, false
+}
+
+// isStatus reports whether err is a GitHub API error carrying the given status.
+func isStatus(err error, code int) bool {
+	c, ok := httpStatus(err)
+	return ok && c == code
+}
+
+// isServerError reports whether err is a GitHub API 5xx — a server-side fault
+// that is worth retrying, unlike a 4xx that signals a bad request.
+func isServerError(err error) bool {
+	c, ok := httpStatus(err)
+	return ok && c >= 500
+}
+
 // is404 reports whether err is a GitHub API "not found" response, the signal
 // that a resource (a Pages config, a branch ref) does not exist yet.
 func is404(err error) bool {
-	var ghErr *github.ErrorResponse
-	return errors.As(err, &ghErr) && ghErr.Response.StatusCode == 404
+	return isStatus(err, http.StatusNotFound)
 }
 
 func resolveToken(ctx context.Context) (string, error) {

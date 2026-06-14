@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"github.com/google/go-github/v72/github"
 )
@@ -771,5 +772,93 @@ func TestCleanupScript(t *testing.T) {
 		if !exists(kept) {
 			t.Errorf("expected %q to be kept", kept)
 		}
+	}
+}
+
+func TestHTTPStatusClassification(t *testing.T) {
+	ghErr := func(code int) error {
+		return &github.ErrorResponse{Response: &http.Response{StatusCode: code}}
+	}
+	tests := []struct {
+		name                   string
+		err                    error
+		is404, isServer, is409 bool
+	}{
+		{"nil response", &github.ErrorResponse{}, false, false, false},
+		{"transport error", context.DeadlineExceeded, false, false, false},
+		{"404", ghErr(http.StatusNotFound), true, false, false},
+		{"409", ghErr(http.StatusConflict), false, false, true},
+		{"403", ghErr(http.StatusForbidden), false, false, false},
+		{"500", ghErr(http.StatusInternalServerError), false, true, false},
+		{"503", ghErr(http.StatusServiceUnavailable), false, true, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := is404(tc.err); got != tc.is404 {
+				t.Errorf("is404 = %v, want %v", got, tc.is404)
+			}
+			if got := isServerError(tc.err); got != tc.isServer {
+				t.Errorf("isServerError = %v, want %v", got, tc.isServer)
+			}
+			if got := isStatus(tc.err, http.StatusConflict); got != tc.is409 {
+				t.Errorf("isStatus(409) = %v, want %v", got, tc.is409)
+			}
+		})
+	}
+}
+
+func TestPagesEnableBackoff(t *testing.T) {
+	for attempt, want := range map[int]time.Duration{1: 0, 2: time.Second, 3: 2 * time.Second} {
+		if got := pagesEnableBackoff(attempt); got != want {
+			t.Errorf("pagesEnableBackoff(%d) = %v, want %v", attempt, got, want)
+		}
+	}
+}
+
+// TestEnablePagesRetriesServerError covers the exact case that motivated the
+// retry: the enable endpoint 500s on the first POST (a freshly created branch
+// not yet visible to the Pages backend) but the write lands, so the retried
+// POST sees it as already enabled (409). enablePages must treat that as success.
+func TestEnablePagesRetriesServerError(t *testing.T) {
+	var posts int
+	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || !strings.HasSuffix(r.URL.Path, "/pages") {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			return
+		}
+		posts++
+		if posts == 1 {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{}`))
+			return
+		}
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"message":"GitHub Pages is already enabled."}`))
+	}))
+
+	if err := enablePages(context.Background(), client, "o", "r", "gh-pages"); err != nil {
+		t.Fatalf("enablePages = %v, want nil (transient 500 then 409 should succeed)", err)
+	}
+	if posts != 2 {
+		t.Errorf("made %d POSTs, want 2 (one 500, one 409)", posts)
+	}
+}
+
+// TestEnablePagesFailsFastOn4xx verifies a non-5xx error is returned immediately
+// without burning the retry budget — a 403 is a real problem, not flakiness.
+func TestEnablePagesFailsFastOn4xx(t *testing.T) {
+	var posts int
+	client := newTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		posts++
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"message":"Forbidden"}`))
+	}))
+
+	err := enablePages(context.Background(), client, "o", "r", "gh-pages")
+	if err == nil {
+		t.Fatal("enablePages = nil, want error on 403")
+	}
+	if posts != 1 {
+		t.Errorf("made %d POSTs, want 1 (4xx must not be retried)", posts)
 	}
 }
