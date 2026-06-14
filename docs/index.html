@@ -3,10 +3,10 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>htmlup — publish HTML to the public web in one command</title>
+    <title>htmlup</title>
     <meta
       name="description"
-      content="htmlup is a small Go CLI that uploads HTML and hands you a public URL per file. Two backends: GitHub Pages and S3/CloudFront. It uploads and exits — no servers, no lifecycle, no stored credentials."
+      content="A tiny command-line tool for sharing HTML. Point htmlup at a file — like a report your AI assistant just generated — and get back a public URL anyone can open. Nothing to host, no credentials stored. Free and open source."
     />
     <meta name="color-scheme" content="dark" />
 
@@ -15,7 +15,7 @@
     <meta property="og:title" content="htmlup" />
     <meta
       property="og:description"
-      content="Publish HTML to the public web in one command."
+      content="Point htmlup at an HTML file and get back a public URL anyone can open."
     />
     <meta property="og:url" content="https://htmlup.truehhart.com/" />
 
@@ -127,25 +127,6 @@
       .hero {
         padding: 72px 0 40px;
       }
-      .badge {
-        display: inline-flex;
-        align-items: center;
-        gap: 8px;
-        font-family: var(--mono);
-        font-size: 0.78rem;
-        color: var(--fg-dim);
-        border: 1px solid var(--border-hi);
-        border-radius: 999px;
-        padding: 5px 12px;
-        margin-bottom: 26px;
-      }
-      .badge .dot {
-        width: 7px;
-        height: 7px;
-        border-radius: 50%;
-        background: var(--accent);
-        box-shadow: 0 0 8px var(--accent);
-      }
       h1 {
         font-size: clamp(2.6rem, 7vw, 4.4rem);
         line-height: 1.02;
@@ -168,6 +149,11 @@
         font-size: clamp(1.1rem, 2.4vw, 1.4rem);
         color: var(--fg-dim);
         max-width: 40ch;
+        margin: 0 0 14px;
+      }
+      .subpitch {
+        color: var(--fg-dim);
+        max-width: 56ch;
         margin: 0 0 32px;
       }
 
@@ -496,11 +482,13 @@
     <main>
       <section class="hero" style="border-top: none">
         <div class="wrap">
-          <span class="badge"
-            ><span class="dot"></span> Go CLI · GitHub Pages + S3 · MIT</span
-          >
           <h1>html<span class="up">up</span></h1>
-          <p class="pitch">Publish HTML to the public web in one command.</p>
+          <p class="pitch">Share your generated reports with one command.</p>
+          <p class="subpitch">
+            Point it at an HTML file — like a report your AI assistant just
+            wrote — and get back a public URL you can send to anyone. Nothing to
+            host, no secrets stored. Free and open source.
+          </p>
 
           <div class="cta">
             <a class="btn primary" href="#usage">Get started</a>
@@ -516,7 +504,6 @@
             <div class="term-head">
               <span class="tdot r"></span><span class="tdot y"></span
               ><span class="tdot g"></span>
-              <span class="ttitle">zsh — htmlup</span>
             </div>
             <div class="term-body" id="demo">
               <div class="line" id="typed"></div>
@@ -558,10 +545,10 @@
             <div class="cap">GitHub Pages</div>
             <button class="copy" type="button">copy</button>
             <pre><span class="cmt"># branch &amp; dir auto-detected from the repo's Pages settings</span>
-htmlup github publish ./claude-html-reports <span class="flag">--repo</span> acme/share
+htmlup github publish ./claude-html-reports <span class="flag">--repo</span> truehhart/share
 
 <span class="cmt"># manual targeting (skips auto-detect); preview with --dry-run</span>
-htmlup github publish ./claude-html-reports <span class="flag">--repo</span> acme/share \
+htmlup github publish ./claude-html-reports <span class="flag">--repo</span> truehhart/share \
   <span class="flag">--branch</span> gh-pages <span class="flag">--dir</span> reports <span class="flag">--dry-run</span></pre>
           </div>
 
@@ -697,22 +684,6 @@ gh auth login   <span class="cmt"># missing token? actionable error points you h
         </div>
       </section>
 
-      <section id="meta">
-        <div class="wrap">
-          <div class="meta">
-            <p style="margin: 0">
-              <span class="k">// dogfood</span> &nbsp;This page is
-              <code>docs/index.html</code> in the repo — and it was
-              published to the web by <strong>htmlup</strong> itself. Turtles
-              all the way down.
-              <span style="color: var(--fg-faint)"
-                >A page about a tool, served by the tool, about serving
-                pages.</span
-              >
-            </p>
-          </div>
-        </div>
-      </section>
     </main>
 
     <footer>
@@ -771,24 +742,27 @@ gh auth login   <span class="cmt"># missing token? actionable error points you h
         var steps = [
           { t: "$ ", cls: "pmt" },
           { t: "htmlup github publish ./claude-html-reports ", cls: "cmd" },
-          { t: "--repo acme/share\n", cls: "flag" },
+          { t: "--repo truehhart/share\n", cls: "flag" },
           {
-            t: "✓ published 3 files to acme/share (branch main)\n",
+            t: "✓ published 3 files to truehhart/share (branch main)\n",
             cls: "out",
             instant: true,
           },
           {
-            t: "https://acme.github.io/share/security-audit.html\n",
+            t: "https://truehhart.github.io/share/security-audit.html\n",
+            href: "https://truehhart.github.io/share/security-audit.html",
             cls: "url",
             instant: true,
           },
           {
-            t: "https://acme.github.io/share/cost-savings-report.html\n",
+            t: "https://truehhart.github.io/share/cost-savings-report.html\n",
+            href: "https://truehhart.github.io/share/cost-savings-report.html",
             cls: "url",
             instant: true,
           },
           {
-            t: "https://acme.github.io/share/migration-plan.html",
+            t: "https://truehhart.github.io/share/migration-plan.html",
+            href: "https://truehhart.github.io/share/migration-plan.html",
             cls: "url",
             instant: true,
           },
@@ -799,14 +773,26 @@ gh auth login   <span class="cmt"># missing token? actionable error points you h
           window.matchMedia &&
           window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
+        // Link steps render as anchors; everything else as a plain span.
+        function makeEl(s) {
+          if (!s.href) {
+            return document.createElement("span");
+          }
+          var a = document.createElement("a");
+          a.href = s.href;
+          a.target = "_blank";
+          a.rel = "noopener";
+          return a;
+        }
+
         // Build a static fallback first (also what reduced-motion users see).
         function renderAll() {
           container.innerHTML = "";
           steps.forEach(function (s) {
-            var span = document.createElement("span");
-            span.className = s.cls;
-            span.textContent = s.t;
-            container.appendChild(span);
+            var el = makeEl(s);
+            el.className = s.cls;
+            el.textContent = s.t;
+            container.appendChild(el);
           });
         }
 
@@ -826,7 +812,7 @@ gh auth login   <span class="cmt"># missing token? actionable error points you h
             return;
           }
           var s = steps[si++];
-          var span = document.createElement("span");
+          var span = makeEl(s);
           span.className = s.cls;
           container.appendChild(span);
           if (s.instant) {
