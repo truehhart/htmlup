@@ -2,6 +2,9 @@ package github
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+
+	"github.com/google/go-github/v72/github"
 )
 
 func TestValidate(t *testing.T) {
@@ -82,7 +87,7 @@ func TestPagesURL(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := tt.p.pagesURL(tt.owner, tt.repo)
+			got := tt.p.pagesURL(tt.owner, tt.repo, tt.p.dir)
 			if got != tt.want {
 				t.Errorf("pagesURL() = %q, want %q", got, tt.want)
 			}
@@ -125,13 +130,17 @@ func TestCollectFiles(t *testing.T) {
 		}
 	})
 
-	t.Run("content preserved", func(t *testing.T) {
+	t.Run("content read lazily", func(t *testing.T) {
 		entries, err := collectFiles(files, "")
 		if err != nil {
 			t.Fatal(err)
 		}
-		if string(entries[1].content) != "<html>index</html>" {
-			t.Errorf("content = %q, want '<html>index</html>'", entries[1].content)
+		data, err := entries[1].read()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(data) != "<html>index</html>" {
+			t.Errorf("content = %q, want '<html>index</html>'", data)
 		}
 	})
 
@@ -377,6 +386,154 @@ func TestResolveToken(t *testing.T) {
 			t.Fatal("expected error when no token available")
 		}
 	})
+}
+
+// newTestClient returns a github.Client whose requests hit handler instead of
+// the real API, so the multi-call git plumbing in pushCommit can be exercised
+// offline.
+func newTestClient(t *testing.T, handler http.Handler) *github.Client {
+	t.Helper()
+	srv := httptest.NewServer(handler)
+	t.Cleanup(srv.Close)
+	u, err := url.Parse(srv.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := github.NewClient(nil)
+	c.BaseURL = u
+	return c
+}
+
+func TestPushCommitNewBranch(t *testing.T) {
+	var blobs, refsCreated int
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/git/blobs"):
+			blobs++
+			_, _ = w.Write([]byte(`{"sha":"blobsha"}`))
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/git/ref/heads/"):
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"message":"Not Found"}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/git/trees"):
+			_, _ = w.Write([]byte(`{"sha":"newtree"}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/git/commits"):
+			_, _ = w.Write([]byte(`{"sha":"newcommit"}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/git/refs"):
+			refsCreated++
+			_, _ = w.Write([]byte(`{"ref":"refs/heads/gh-pages"}`))
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+	}
+	client := newTestClient(t, http.HandlerFunc(handler))
+
+	entries := []fileEntry{
+		{path: "index.html", read: staticContent([]byte("<html>"))},
+		{path: "style.css", read: staticContent([]byte("body{}"))},
+	}
+	commit, err := pushCommit(context.Background(), client, "o", "r", "gh-pages", "msg", entries, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if blobs != 2 {
+		t.Errorf("created %d blobs, want 2 (one per entry)", blobs)
+	}
+	if refsCreated != 1 {
+		t.Errorf("created %d refs, want 1 (missing branch should be created)", refsCreated)
+	}
+	if commit.GetSHA() != "newcommit" {
+		t.Errorf("commit SHA = %q, want newcommit", commit.GetSHA())
+	}
+}
+
+func TestPushCommitExistingBranch(t *testing.T) {
+	var refsUpdated, refsCreated int
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/git/blobs"):
+			_, _ = w.Write([]byte(`{"sha":"blobsha"}`))
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/git/ref/heads/"):
+			_, _ = w.Write([]byte(`{"ref":"refs/heads/gh-pages","object":{"sha":"basecommit"}}`))
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/git/commits/"):
+			_, _ = w.Write([]byte(`{"sha":"basecommit","tree":{"sha":"basetree"}}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/git/trees"):
+			// New tree SHA differs from the base tree, so the commit proceeds.
+			_, _ = w.Write([]byte(`{"sha":"newtree"}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/git/commits"):
+			_, _ = w.Write([]byte(`{"sha":"newcommit"}`))
+		case r.Method == http.MethodPatch && strings.Contains(r.URL.Path, "/git/refs/heads/"):
+			refsUpdated++
+			_, _ = w.Write([]byte(`{"ref":"refs/heads/gh-pages","object":{"sha":"newcommit"}}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/git/refs"):
+			refsCreated++
+			_, _ = w.Write([]byte(`{"ref":"refs/heads/gh-pages"}`))
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+	}
+	client := newTestClient(t, http.HandlerFunc(handler))
+
+	commit, err := pushCommit(context.Background(), client, "o", "r", "gh-pages", "msg",
+		[]fileEntry{{path: "index.html", read: staticContent([]byte("<html>"))}}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if refsUpdated != 1 {
+		t.Errorf("updated %d refs, want 1 (existing branch ref should be moved)", refsUpdated)
+	}
+	if refsCreated != 0 {
+		t.Errorf("created %d refs, want 0 (branch already exists)", refsCreated)
+	}
+	if commit.GetSHA() != "newcommit" {
+		t.Errorf("commit SHA = %q, want newcommit", commit.GetSHA())
+	}
+}
+
+// TestPushCommitNoChange covers the idempotent path: when the merged tree
+// matches the branch's current tree, no commit is created and the branch ref is
+// left untouched (so Pages doesn't needlessly rebuild).
+func TestPushCommitNoChange(t *testing.T) {
+	var commitsCreated, refWrites int
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/git/blobs"):
+			_, _ = w.Write([]byte(`{"sha":"blobsha"}`))
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/git/ref/heads/"):
+			_, _ = w.Write([]byte(`{"ref":"refs/heads/gh-pages","object":{"sha":"basecommit"}}`))
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/git/commits/"):
+			_, _ = w.Write([]byte(`{"sha":"basecommit","tree":{"sha":"basetree"}}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/git/trees"):
+			// Same SHA as the base tree → nothing changed.
+			_, _ = w.Write([]byte(`{"sha":"basetree"}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/git/commits"):
+			commitsCreated++
+			_, _ = w.Write([]byte(`{"sha":"newcommit"}`))
+		case strings.Contains(r.URL.Path, "/git/refs"):
+			refWrites++
+			_, _ = w.Write([]byte(`{}`))
+		default:
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+	}
+	client := newTestClient(t, http.HandlerFunc(handler))
+
+	commit, err := pushCommit(context.Background(), client, "o", "r", "gh-pages", "msg",
+		[]fileEntry{{path: "index.html", read: staticContent([]byte("<html>"))}}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if commitsCreated != 0 {
+		t.Errorf("created %d commits, want 0 (tree unchanged)", commitsCreated)
+	}
+	if refWrites != 0 {
+		t.Errorf("wrote ref %d times, want 0 (tree unchanged)", refWrites)
+	}
+	if commit.GetSHA() != "basecommit" {
+		t.Errorf("commit SHA = %q, want basecommit (the existing HEAD)", commit.GetSHA())
+	}
 }
 
 // TestCleanupScript runs the embedded cleanup.sh against a throwaway git repo so

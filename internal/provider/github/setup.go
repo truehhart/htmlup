@@ -10,7 +10,6 @@ import (
 
 	"github.com/google/go-github/v72/github"
 	"github.com/spf13/cobra"
-	"golang.org/x/oauth2"
 
 	"github.com/truehhart/htmlup/internal/provider"
 )
@@ -62,13 +61,9 @@ func (p *Provider) setup(ctx context.Context, dryRun, verbose bool) (provider.Re
 		return provider.Result{}, err
 	}
 
-	client := github.NewClient(
-		oauth2.NewClient(ctx, oauth2.StaticTokenSource(
-			&oauth2.Token{AccessToken: token},
-		)),
-	)
+	client := newGitHubClient(ctx, token)
 
-	url := p.pagesURL(owner, repoName)
+	url := p.pagesURL(owner, repoName, p.dir)
 	landing := helloWorldHTML(p.ttlDays, p.repo, url)
 	workflow := cleanupWorkflowYAML(p.cron, p.ttlDays, p.branch, p.exclude)
 
@@ -92,7 +87,7 @@ func (p *Provider) setup(ctx context.Context, dryRun, verbose bool) (provider.Re
 	}
 	workflowCommit, err := pushCommit(ctx, client, owner, repoName, defaultBranch,
 		"install htmlup cleanup workflow via htmlup",
-		[]fileEntry{{path: cleanupWorkflowPath, content: []byte(workflow)}}, verbose)
+		[]fileEntry{{path: cleanupWorkflowPath, read: staticContent([]byte(workflow))}}, verbose)
 	if err != nil {
 		return provider.Result{}, fmt.Errorf("installing cleanup workflow on %s: %w\n"+
 			"hint: the token needs the 'workflow' scope and the default branch (%s) must allow direct pushes",
@@ -104,9 +99,9 @@ func (p *Provider) setup(ctx context.Context, dryRun, verbose bool) (provider.Re
 
 	// 2. Publish the hello-world landing page to the Pages branch (creates it),
 	// plus a CNAME file when a custom domain was requested.
-	landingFiles := []fileEntry{{path: "index.html", content: []byte(landing)}}
+	landingFiles := []fileEntry{{path: "index.html", read: staticContent([]byte(landing))}}
 	if p.cname != "" {
-		landingFiles = append(landingFiles, fileEntry{path: "CNAME", content: []byte(p.cname + "\n")})
+		landingFiles = append(landingFiles, fileEntry{path: "CNAME", read: staticContent([]byte(p.cname + "\n"))})
 	}
 	landingCommit, err := pushCommit(ctx, client, owner, repoName, p.branch,
 		"bootstrap landing page via htmlup", landingFiles, verbose)
@@ -118,7 +113,7 @@ func (p *Provider) setup(ctx context.Context, dryRun, verbose bool) (provider.Re
 	}
 
 	// 3. Enable Pages on the bootstrapped branch (now that it exists).
-	if err := p.ensurePages(ctx, client, owner, repoName); err != nil {
+	if err := p.ensurePages(ctx, client, owner, repoName, p.branch); err != nil {
 		return provider.Result{}, err
 	}
 	if verbose {
