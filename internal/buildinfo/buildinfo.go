@@ -41,7 +41,7 @@ func resolve(version, commit, date string, bi *debug.BuildInfo, ok bool) Info {
 					info.Date = s.Value
 				}
 			case "vcs.modified":
-				info.Modified = info.Modified || s.Value == "true"
+				info.Modified = s.Value == "true"
 			}
 		}
 	}
