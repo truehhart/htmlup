@@ -256,6 +256,10 @@ func SplitRef(ref string) (provider, profile string, ok bool) {
 	return provider, profile, true
 }
 
+// ValidName reports whether s is a legal provider/profile/field identifier
+// (letters, digits, underscores, hyphens; non-empty).
+func ValidName(s string) bool { return validName(s) }
+
 func validName(name string) bool {
 	if name == "" {
 		return false

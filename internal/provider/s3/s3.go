@@ -9,6 +9,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -33,6 +34,41 @@ type Provider struct {
 }
 
 func (p *Provider) Name() string { return "s3" }
+
+var s3BucketRE = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$`)
+
+func (p *Provider) ConfigSchema() []provider.ConfigField {
+	return []provider.ConfigField{
+		{
+			Key:      "bucket",
+			Label:    "Bucket name",
+			Help:     "Target S3 bucket. Exposure (CloudFront, etc.) is your responsibility.",
+			Required: true,
+			Validate: func(v string) error {
+				if !s3BucketRE.MatchString(v) || strings.Contains(v, "..") {
+					return fmt.Errorf("not a valid S3 bucket name")
+				}
+				return nil
+			},
+		},
+		{
+			Key:   "prefix",
+			Label: "Key prefix (optional)",
+			Help:  "Logical folder inside the bucket. Leave blank to upload at the root.",
+		},
+		{
+			Key:   "region",
+			Label: "Region (leave blank to use AWS default chain)",
+			Help:  "Overrides the region resolved from your AWS config. Leave blank to inherit it.",
+			Default: func() string {
+				if r := os.Getenv("AWS_REGION"); r != "" {
+					return r
+				}
+				return os.Getenv("AWS_DEFAULT_REGION")
+			},
+		},
+	}
+}
 
 func (p *Provider) Command() *cobra.Command {
 	cmd := &cobra.Command{

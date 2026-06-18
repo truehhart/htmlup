@@ -39,3 +39,20 @@ type PublishProvider interface {
 	Provider
 	Publish(ctx context.Context, localPath string, profile config.Profile, dryRun, verbose bool) (Result, error)
 }
+
+// ConfigField describes one key a provider stores in its config profile.
+// Providers expose these via ConfigSchemaProvider so `htmlup config init` can
+// prompt for them without baking provider-specific knowledge into the CLI.
+type ConfigField struct {
+	Key      string        // profile key, e.g. "repo"
+	Label    string        // prompt label, e.g. "Repository (owner/name)"
+	Help     string        // one-line help shown above the prompt
+	Required bool          // empty input is rejected
+	Default  func() string // resolved default (env-derived, gh CLI, etc.); empty when unset
+	Validate func(value string) error
+}
+
+type ConfigSchemaProvider interface {
+	Provider
+	ConfigSchema() []ConfigField
+}

@@ -31,6 +31,48 @@ type Provider struct {
 
 func (p *Provider) Name() string { return "github" }
 
+func (p *Provider) ConfigSchema() []provider.ConfigField {
+	return []provider.ConfigField{
+		{
+			Key:      "repo",
+			Label:    "Repository (owner/name)",
+			Help:     "Target repository that hosts the GitHub Pages site.",
+			Required: true,
+			Validate: func(v string) error {
+				if _, _, ok := splitRepo(v); !ok {
+					return fmt.Errorf("must be in owner/name format")
+				}
+				return nil
+			},
+		},
+		{
+			Key:   "branch",
+			Label: "Branch (leave blank to auto-detect from Pages settings)",
+			Help:  "Branch to push to. Leave blank to target whichever branch GitHub Pages already serves; falls back to gh-pages.",
+			Validate: func(v string) error {
+				if v == "" {
+					return nil
+				}
+				if !validBranchName(v) {
+					return fmt.Errorf("not a valid Git branch name")
+				}
+				return nil
+			},
+		},
+		{
+			Key:   "dir",
+			Label: "Directory within the branch (optional)",
+			Help:  "Subdirectory inside the branch to upload into. Leave blank to auto-detect from the Pages source path.",
+			Validate: func(v string) error {
+				if !validPublishDir(v) {
+					return fmt.Errorf("must be a clean relative path")
+				}
+				return nil
+			},
+		},
+	}
+}
+
 func (p *Provider) Command() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "github",

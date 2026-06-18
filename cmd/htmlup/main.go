@@ -1,14 +1,17 @@
 package main
 
 import (
-	"errors"
+	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"github.com/truehhart/htmlup/internal/buildinfo"
 	htmlconfig "github.com/truehhart/htmlup/internal/config"
 	"github.com/truehhart/htmlup/internal/provider"
+	"github.com/truehhart/htmlup/internal/wizard"
 
 	_ "github.com/truehhart/htmlup/internal/provider/github"
 	_ "github.com/truehhart/htmlup/internal/provider/s3"
@@ -85,37 +88,107 @@ func newConfigCmd() *cobra.Command {
 }
 
 func newConfigInitCmd() *cobra.Command {
-	var force bool
+	var (
+		force          bool
+		nonInteractive bool
+		providerName   string
+		profileName    string
+		setFlag        []string
+		setDefaultStr  string
+	)
 	cmd := &cobra.Command{
 		Use:   "init",
-		Short: "Create an empty config file",
-		Args:  cobra.NoArgs,
+		Short: "Set up a config profile (interactive by default)",
+		Long: `Walks through provider selection and the fields that provider needs,
+writing the result to the config file. The same fields can be supplied
+non-interactively via --set key=value flags; use --non-interactive to
+fail rather than prompt for anything missing.`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cmd.SilenceUsage = true
-			path := htmlconfig.PathFromCommand(cmd)
-			if path == "" {
-				var err error
-				path, err = htmlconfig.DefaultPath()
-				if err != nil {
-					return err
-				}
-			}
-			if !force {
-				if _, err := os.Stat(path); err == nil {
-					return errors.New("config already exists at " + path + " (use --force to overwrite)")
-				} else if !errors.Is(err, os.ErrNotExist) {
-					return err
-				}
-			}
-			if err := htmlconfig.Save(path, htmlconfig.Empty()); err != nil {
+
+			preset, err := parseSetFlags(setFlag)
+			if err != nil {
 				return err
 			}
-			cmd.Printf("created %s\n", path)
+			setDefault, err := parseTristate(setDefaultStr)
+			if err != nil {
+				return fmt.Errorf("--set-default: %w", err)
+			}
+
+			// Non-TTY stdin (pipe, CI) implies non-interactive — there's no one
+			// to answer prompts. Flags + --set still flow through normally.
+			if !nonInteractive && !stdinIsTerminal() {
+				nonInteractive = true
+			}
+
+			result, err := wizard.Run(wizard.Options{
+				Path:           htmlconfig.PathFromCommand(cmd),
+				ProviderName:   providerName,
+				ProfileName:    profileName,
+				Preset:         preset,
+				NonInteractive: nonInteractive,
+				Force:          force,
+				SetDefault:     setDefault,
+				Stdin:          cmd.InOrStdin(),
+				Stdout:         cmd.OutOrStdout(),
+			})
+			if err != nil {
+				return err
+			}
+
+			verb := "updated"
+			if result.IsNew {
+				verb = "created"
+			}
+			cmd.Printf("%s profile %s.%s in %s\n", verb, result.Provider, result.Profile, result.Path)
+			if result.Default {
+				cmd.Printf("set as default profile\n")
+			}
+			cmd.Printf("try: htmlup publish <path>\n")
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&force, "force", false, "overwrite an existing config file")
+	cmd.Flags().BoolVar(&force, "force", false, "overwrite an existing profile without confirming")
+	cmd.Flags().BoolVar(&nonInteractive, "non-interactive", false, "never prompt; require all values via flags")
+	cmd.Flags().StringVar(&providerName, "provider", "", "provider name (e.g. github, s3)")
+	cmd.Flags().StringVar(&profileName, "profile", "", "profile name (default: 'default')")
+	cmd.Flags().StringArrayVar(&setFlag, "set", nil, "preset a field: --set key=value (repeatable)")
+	cmd.Flags().StringVar(&setDefaultStr, "set-default", "", "force whether to set this as default: yes|no (default: ask if interactive)")
 	return cmd
+}
+
+func parseSetFlags(pairs []string) (map[string]string, error) {
+	if len(pairs) == 0 {
+		return nil, nil
+	}
+	out := make(map[string]string, len(pairs))
+	for _, p := range pairs {
+		k, v, ok := strings.Cut(p, "=")
+		if !ok || k == "" {
+			return nil, fmt.Errorf("--set %q: expected key=value", p)
+		}
+		out[k] = v
+	}
+	return out, nil
+}
+
+func parseTristate(s string) (*bool, error) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "":
+		return nil, nil
+	case "y", "yes", "true", "1":
+		t := true
+		return &t, nil
+	case "n", "no", "false", "0":
+		f := false
+		return &f, nil
+	}
+	return nil, fmt.Errorf("expected yes|no, got %q", s)
+}
+
+func stdinIsTerminal() bool {
+	return term.IsTerminal(int(os.Stdin.Fd()))
 }
 
 func newConfigInspectCmd() *cobra.Command {
