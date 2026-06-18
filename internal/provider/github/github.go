@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	htmlconfig "github.com/truehhart/htmlup/internal/config"
 	"github.com/truehhart/htmlup/internal/fsutil"
 	"github.com/truehhart/htmlup/internal/provider"
 )
@@ -42,8 +43,9 @@ func (p *Provider) Command() *cobra.Command {
 
 func (p *Provider) publishCmd() *cobra.Command {
 	var (
-		dryRun  bool
-		verbose bool
+		dryRun      bool
+		verbose     bool
+		profileName string
 	)
 	cmd := &cobra.Command{
 		Use:   "publish <path>",
@@ -53,6 +55,11 @@ func (p *Provider) publishCmd() *cobra.Command {
 			// Flags parsed cleanly; from here errors are runtime failures, not
 			// misuse, so don't tack the usage screen onto them.
 			cmd.SilenceUsage = true
+			profile, _, err := provider.SelectedProfile(cmd, p.Name(), profileName)
+			if err != nil {
+				return err
+			}
+			applied := p.applyProfile(profile, cmd)
 			if err := p.validate(); err != nil {
 				return err
 			}
@@ -62,7 +69,7 @@ func (p *Provider) publishCmd() *cobra.Command {
 			}
 			// By default, target wherever Pages already serves from. Setting
 			// --branch/--dir explicitly (or --no-auto) opts back into manual mode.
-			autoDetect := !p.noAuto && !cmd.Flags().Changed("branch") && !cmd.Flags().Changed("dir")
+			autoDetect := !p.noAuto && !applied.manualTarget && !cmd.Flags().Changed("branch") && !cmd.Flags().Changed("dir")
 			result, err := p.publish(cmd.Context(), provider.Target{
 				Files:   files,
 				DryRun:  dryRun,
@@ -76,18 +83,61 @@ func (p *Provider) publishCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&p.repo, "repo", "", "target repository (owner/name)")
-	_ = cmd.MarkFlagRequired("repo")
 	cmd.Flags().StringVar(&p.branch, "branch", "gh-pages", "branch to push to (default: auto-detected from Pages settings)")
 	cmd.Flags().StringVar(&p.dir, "dir", "", "subdirectory within the branch (default: auto-detected from Pages settings)")
 	cmd.Flags().BoolVar(&p.noAuto, "no-auto", false, "don't auto-detect the target from GitHub Pages settings; use --branch/--dir as given")
+	cmd.Flags().StringVar(&profileName, "profile", "", "config profile name to use for github")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show what would be uploaded without writing")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "per-file progress and SDK detail")
 	return cmd
 }
 
+func (p *Provider) Publish(ctx context.Context, localPath string, profile htmlconfig.Profile, dryRun, verbose bool) (provider.Result, error) {
+	applied := p.applyProfile(profile, nil)
+	if err := p.validate(); err != nil {
+		return provider.Result{}, err
+	}
+	files, err := fsutil.ResolveFS(localPath)
+	if err != nil {
+		return provider.Result{}, err
+	}
+	autoDetect := !p.noAuto && !applied.manualTarget
+	return p.publish(ctx, provider.Target{
+		Files:   files,
+		DryRun:  dryRun,
+		Verbose: verbose,
+	}, autoDetect)
+}
+
+type profileApplyResult struct {
+	manualTarget bool
+}
+
+func (p *Provider) applyProfile(profile htmlconfig.Profile, cmd *cobra.Command) profileApplyResult {
+	var result profileApplyResult
+	if profile == nil {
+		return result
+	}
+	if v := profile["repo"]; v != "" && !provider.FlagChanged(cmd, "repo") {
+		p.repo = v
+	}
+	if v := profile["branch"]; v != "" && !provider.FlagChanged(cmd, "branch") {
+		p.branch = v
+		result.manualTarget = true
+	}
+	if v, ok := profile["dir"]; ok && !provider.FlagChanged(cmd, "dir") {
+		p.dir = v
+		result.manualTarget = true
+	}
+	if v := profile["no_auto"]; v != "" && !provider.FlagChanged(cmd, "no-auto") {
+		p.noAuto = v == "true"
+	}
+	return result
+}
+
 func (p *Provider) validate() error {
 	if _, _, ok := splitRepo(p.repo); !ok {
-		return fmt.Errorf("--repo must be in owner/name format")
+		return fmt.Errorf("--repo must be in owner/name format (set it with --repo or a config profile)")
 	}
 	if !validBranchName(p.branch) {
 		return fmt.Errorf("--branch must be a valid Git branch name")

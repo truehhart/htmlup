@@ -1,9 +1,14 @@
 package provider
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/spf13/cobra"
+
+	"github.com/truehhart/htmlup/internal/config"
 )
 
 func resetRegistry() {
@@ -18,6 +23,22 @@ type mockProvider struct {
 
 func (m *mockProvider) Name() string            { return m.name }
 func (m *mockProvider) Command() *cobra.Command { return &cobra.Command{Use: m.name} }
+
+type mockPublishProvider struct {
+	mockProvider
+	gotPath    string
+	gotProfile config.Profile
+	gotDryRun  bool
+	gotVerbose bool
+}
+
+func (m *mockPublishProvider) Publish(_ context.Context, localPath string, profile config.Profile, dryRun, verbose bool) (Result, error) {
+	m.gotPath = localPath
+	m.gotProfile = profile
+	m.gotDryRun = dryRun
+	m.gotVerbose = verbose
+	return Result{URLs: []string{"https://example.test/index.html"}}, nil
+}
 
 func TestRegisterAndGet(t *testing.T) {
 	t.Cleanup(resetRegistry)
@@ -79,5 +100,111 @@ func TestAll(t *testing.T) {
 	}
 	if all[0].Name() != "alpha" || all[1].Name() != "beta" {
 		t.Errorf("got [%s, %s], want [alpha, beta]", all[0].Name(), all[1].Name())
+	}
+}
+
+func TestPublishConfigured(t *testing.T) {
+	t.Cleanup(resetRegistry)
+
+	p := &mockPublishProvider{mockProvider: mockProvider{name: "mock"}}
+	Register(p)
+	cfg := config.Config{
+		Default: "mock.personal",
+		Providers: map[string]map[string]config.Profile{
+			"mock": {
+				"personal": {"repo": "owner/repo"},
+			},
+		},
+	}
+
+	result, err := PublishConfigured(context.Background(), "./site", cfg, true, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.URLs) != 1 || result.URLs[0] != "https://example.test/index.html" {
+		t.Fatalf("result = %#v", result)
+	}
+	if p.gotPath != "./site" || p.gotProfile["repo"] != "owner/repo" || !p.gotDryRun || !p.gotVerbose {
+		t.Fatalf("publisher args = path %q profile %#v dry %v verbose %v", p.gotPath, p.gotProfile, p.gotDryRun, p.gotVerbose)
+	}
+}
+
+func TestPublishConfiguredErrorsWithoutDefault(t *testing.T) {
+	t.Cleanup(resetRegistry)
+
+	Register(&mockPublishProvider{mockProvider: mockProvider{name: "mock"}})
+	cfg := config.Config{
+		Providers: map[string]map[string]config.Profile{
+			"mock": {
+				"personal": {},
+				"work":     {},
+			},
+		},
+	}
+	_, err := PublishConfigured(context.Background(), "./site", cfg, false, false)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}
+
+func TestPublishConfiguredUsesOnlyProfileWithoutDefault(t *testing.T) {
+	t.Cleanup(resetRegistry)
+
+	p := &mockPublishProvider{mockProvider: mockProvider{name: "mock"}}
+	Register(p)
+	cfg := config.Config{
+		Providers: map[string]map[string]config.Profile{
+			"mock": {
+				"personal": {"repo": "owner/repo"},
+			},
+		},
+	}
+
+	if _, err := PublishConfigured(context.Background(), "./site", cfg, false, false); err != nil {
+		t.Fatal(err)
+	}
+	if p.gotProfile["repo"] != "owner/repo" {
+		t.Fatalf("profile = %#v", p.gotProfile)
+	}
+}
+
+func TestSelectedProfile(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(configPath, []byte(`
+default = "mock.personal"
+
+[providers.mock.personal]
+repo = "owner/repo"
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root := &cobra.Command{Use: "root"}
+	root.PersistentFlags().String("config", configPath, "")
+	cmd := &cobra.Command{Use: "child"}
+	root.AddCommand(cmd)
+
+	profile, selected, err := SelectedProfile(cmd, "mock", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selected != "personal" || profile["repo"] != "owner/repo" {
+		t.Fatalf("selected = %q profile = %#v", selected, profile)
+	}
+}
+
+func TestFlagChanged(t *testing.T) {
+	cmd := &cobra.Command{Use: "cmd"}
+	cmd.Flags().String("repo", "", "")
+	if FlagChanged(cmd, "repo") {
+		t.Fatal("flag should not be changed before Set")
+	}
+	if err := cmd.Flags().Set("repo", "owner/repo"); err != nil {
+		t.Fatal(err)
+	}
+	if !FlagChanged(cmd, "repo") {
+		t.Fatal("flag should be changed after Set")
+	}
+	if FlagChanged(nil, "repo") {
+		t.Fatal("nil command should not report changed flags")
 	}
 }

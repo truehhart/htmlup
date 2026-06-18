@@ -17,6 +17,7 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/sync/errgroup"
 
+	htmlconfig "github.com/truehhart/htmlup/internal/config"
 	"github.com/truehhart/htmlup/internal/fsutil"
 	"github.com/truehhart/htmlup/internal/provider"
 )
@@ -44,8 +45,9 @@ func (p *Provider) Command() *cobra.Command {
 
 func (p *Provider) publishCmd() *cobra.Command {
 	var (
-		dryRun  bool
-		verbose bool
+		dryRun      bool
+		verbose     bool
+		profileName string
 	)
 	cmd := &cobra.Command{
 		Use:   "publish <path>",
@@ -55,6 +57,14 @@ func (p *Provider) publishCmd() *cobra.Command {
 			// Flags parsed cleanly; from here errors are runtime failures, not
 			// misuse, so don't tack the usage screen onto them.
 			cmd.SilenceUsage = true
+			profile, _, err := provider.SelectedProfile(cmd, p.Name(), profileName)
+			if err != nil {
+				return err
+			}
+			p.applyProfile(profile, cmd)
+			if err := p.validate(); err != nil {
+				return err
+			}
 			files, err := fsutil.ResolveFS(args[0])
 			if err != nil {
 				return err
@@ -72,12 +82,50 @@ func (p *Provider) publishCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&p.bucket, "bucket", "", "target S3 bucket")
-	_ = cmd.MarkFlagRequired("bucket")
 	cmd.Flags().StringVar(&p.prefix, "prefix", "", "key prefix (logical folder)")
 	cmd.Flags().StringVar(&p.region, "region", "", "AWS region override")
+	cmd.Flags().StringVar(&profileName, "profile", "", "config profile name to use for s3")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show what would be uploaded without writing")
 	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "per-file progress and SDK detail")
 	return cmd
+}
+
+func (p *Provider) Publish(ctx context.Context, localPath string, profile htmlconfig.Profile, dryRun, verbose bool) (provider.Result, error) {
+	p.applyProfile(profile, nil)
+	if err := p.validate(); err != nil {
+		return provider.Result{}, err
+	}
+	files, err := fsutil.ResolveFS(localPath)
+	if err != nil {
+		return provider.Result{}, err
+	}
+	return p.publish(ctx, provider.Target{
+		Files:   files,
+		DryRun:  dryRun,
+		Verbose: verbose,
+	})
+}
+
+func (p *Provider) applyProfile(profile htmlconfig.Profile, cmd *cobra.Command) {
+	if profile == nil {
+		return
+	}
+	if v := profile["bucket"]; v != "" && !provider.FlagChanged(cmd, "bucket") {
+		p.bucket = v
+	}
+	if v, ok := profile["prefix"]; ok && !provider.FlagChanged(cmd, "prefix") {
+		p.prefix = v
+	}
+	if v := profile["region"]; v != "" && !provider.FlagChanged(cmd, "region") {
+		p.region = v
+	}
+}
+
+func (p *Provider) validate() error {
+	if p.bucket == "" {
+		return fmt.Errorf("--bucket is required (set it with --bucket or a config profile)")
+	}
+	return nil
 }
 
 func (p *Provider) publish(ctx context.Context, t provider.Target) (provider.Result, error) {

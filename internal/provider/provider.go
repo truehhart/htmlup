@@ -1,10 +1,13 @@
 package provider
 
 import (
+	"context"
 	"fmt"
 	"io/fs"
 
 	"github.com/spf13/cobra"
+
+	"github.com/truehhart/htmlup/internal/config"
 )
 
 type Target struct {
@@ -30,4 +33,9 @@ func (r Result) PrintURLs() {
 type Provider interface {
 	Name() string
 	Command() *cobra.Command
+}
+
+type PublishProvider interface {
+	Provider
+	Publish(ctx context.Context, localPath string, profile config.Profile, dryRun, verbose bool) (Result, error)
 }

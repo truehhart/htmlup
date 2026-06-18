@@ -38,3 +38,41 @@ func TestValidate(t *testing.T) {
 		})
 	}
 }
+
+func TestApplyProfileNoAutoFalseDoesNotForceManualTarget(t *testing.T) {
+	p := &Provider{branch: "gh-pages"}
+
+	applied := p.applyProfile(map[string]string{
+		"repo":    "owner/repo",
+		"no_auto": "false",
+	}, nil)
+
+	if p.noAuto {
+		t.Fatal("no_auto=false set noAuto true")
+	}
+	if applied.manualTarget {
+		t.Fatal("no_auto=false forced manual target")
+	}
+}
+
+func TestApplyProfileManualTargetOnlyForBranchOrDir(t *testing.T) {
+	tests := []struct {
+		name    string
+		profile map[string]string
+		want    bool
+	}{
+		{"repo only", map[string]string{"repo": "owner/repo"}, false},
+		{"branch", map[string]string{"branch": "main"}, true},
+		{"dir", map[string]string{"dir": "docs"}, true},
+		{"no auto true", map[string]string{"no_auto": "true"}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := &Provider{branch: "gh-pages"}
+			applied := p.applyProfile(tt.profile, nil)
+			if applied.manualTarget != tt.want {
+				t.Fatalf("manualTarget = %v, want %v", applied.manualTarget, tt.want)
+			}
+		})
+	}
+}
