@@ -11,6 +11,7 @@
     <meta name="color-scheme" content="dark" />
 
     <!-- Favicons -->
+    <link rel="icon" href="public/favicon.ico" sizes="any" />
     <link rel="icon" type="image/png" sizes="32x32" href="public/favicon-32.png" />
     <link rel="icon" type="image/png" sizes="16x16" href="public/favicon-16.png" />
     <link rel="apple-touch-icon" href="public/apple-touch-icon.png" />
@@ -23,6 +24,9 @@
       content="Point htmlup at an HTML file and get back a public URL anyone can open."
     />
     <meta property="og:url" content="https://htmlup.truehhart.com/" />
+    <meta property="og:image" content="https://htmlup.truehhart.com/public/logo.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:image" content="https://htmlup.truehhart.com/public/logo.png" />
 
     <style>
       :root {
@@ -107,10 +111,20 @@
         padding: 12px 24px;
       }
       .brand {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
         font-family: var(--mono);
         font-weight: 700;
         font-size: 1rem;
         letter-spacing: -0.02em;
+        text-decoration: none;
+        color: inherit;
+      }
+      .brand img {
+        width: 28px;
+        height: 28px;
+        display: block;
       }
       .brand .prompt {
         color: var(--accent);
@@ -471,7 +485,10 @@
   <body>
     <header class="bar">
       <div class="bar-inner">
-        <span class="brand"><span class="prompt">$ </span>htmlup</span>
+        <a href="/" class="brand"
+          ><img src="public/htmlup.png" alt="" /><span class="prompt">$ </span
+          >htmlup</a
+        >
         <nav class="bar-links" aria-label="Primary">
           <a href="#install">Install</a>
           <a href="#usage">Usage</a>
