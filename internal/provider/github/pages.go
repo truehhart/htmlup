@@ -5,13 +5,23 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"os"
 	"path"
 	"strings"
 	"time"
 
 	"github.com/google/go-github/v72/github"
+
+	"github.com/truehhart/htmlup/internal/ui"
 )
+
+// entrySummary describes the published set for human-readable output: the file
+// name for a single entry, an "N files" tally otherwise.
+func entrySummary(entries []fileEntry, dir string) string {
+	if len(entries) == 1 {
+		return servedPath(entries[0].path, dir)
+	}
+	return ui.Plural(len(entries), "file", "files")
+}
 
 func (p *Provider) pagesURL(owner, repo, dir string) string {
 	var u string
@@ -37,18 +47,18 @@ func (p *Provider) pagesURL(owner, repo, dir string) string {
 // never repoints an existing config, since publish auto-detects the live source
 // (autoTarget) and must not fight an intentional setup. The setup command, which
 // is explicitly configuring the repo, uses reconcilePages to offer a repoint.
-func (p *Provider) ensurePages(ctx context.Context, client *github.Client, owner, repo, branch string) error {
+func (p *Provider) ensurePages(ctx context.Context, client *github.Client, owner, repo, branch string, out *ui.Output) error {
 	info, _, err := client.Repositories.GetPagesInfo(ctx, owner, repo)
 	if err == nil {
 		if w := pagesMismatchWarning(info.GetBuildType(), info.GetSource().GetBranch(), info.GetSource().GetPath(), branch); w != "" {
-			fmt.Fprintf(os.Stderr, "warning: %s\n", w)
+			out.Warn("%s", w)
 		}
 		return nil // already enabled
 	}
 	if !is404(err) {
 		return fmt.Errorf("checking GitHub Pages status: %w", err)
 	}
-	return enablePages(ctx, client, owner, repo, branch)
+	return enablePages(ctx, client, owner, repo, branch, out)
 }
 
 // pagesEnableAttempts is the total number of times enablePages POSTs before
@@ -64,7 +74,7 @@ const pagesEnableAttempts = 4
 // the 500, so we retry with a short backoff and treat an "already enabled" 409
 // (a prior 500 that actually took, or a concurrent enable) as success. Only 5xx
 // is retried; any other error fails fast.
-func enablePages(ctx context.Context, client *github.Client, owner, repo, branch string) error {
+func enablePages(ctx context.Context, client *github.Client, owner, repo, branch string, out *ui.Output) error {
 	pages := &github.Pages{
 		BuildType: github.Ptr("legacy"),
 		Source: &github.PagesSource{
@@ -76,8 +86,7 @@ func enablePages(ctx context.Context, client *github.Client, owner, repo, branch
 	var lastErr error
 	for attempt := 1; attempt <= pagesEnableAttempts; attempt++ {
 		if attempt > 1 {
-			fmt.Fprintf(os.Stderr, "GitHub Pages enable returned a server error; retrying (%d/%d)...\n",
-				attempt, pagesEnableAttempts)
+			out.Info("GitHub Pages enable returned a server error; retrying (%d/%d)", attempt, pagesEnableAttempts)
 			if err := sleep(ctx, pagesEnableBackoff(attempt)); err != nil {
 				return err
 			}
@@ -272,14 +281,6 @@ func servedURL(base, entryPath, dir string) string {
 
 func encodeURLPath(p string) string {
 	return (&url.URL{Path: p}).EscapedPath()
-}
-
-// entrySummary describes the published set for human-readable output.
-func entrySummary(entries []fileEntry, dir string) string {
-	if len(entries) == 1 {
-		return servedPath(entries[0].path, dir)
-	}
-	return fmt.Sprintf("%d files", len(entries))
 }
 
 // dirNote renders the source subdirectory for human output (", /docs" or "").

@@ -4,8 +4,11 @@ import (
 	"context"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"testing/fstest"
+
+	"github.com/truehhart/htmlup/internal/ui"
 )
 
 func TestCollectFiles(t *testing.T) {
@@ -69,11 +72,14 @@ func TestCollectFiles(t *testing.T) {
 }
 
 func TestPushCommitNewBranch(t *testing.T) {
-	var blobs, refsCreated int
+	// Counters are touched from net/http handler goroutines that run
+	// concurrently with the blob fan-out in pushCommit; plain ints would race
+	// under `go test -race`.
+	var blobs, refsCreated atomic.Int64
 	handler := func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/git/blobs"):
-			blobs++
+			blobs.Add(1)
 			_, _ = w.Write([]byte(`{"sha":"blobsha"}`))
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/git/ref/heads/"):
 			w.WriteHeader(http.StatusNotFound)
@@ -83,7 +89,7 @@ func TestPushCommitNewBranch(t *testing.T) {
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/git/commits"):
 			_, _ = w.Write([]byte(`{"sha":"newcommit"}`))
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/git/refs"):
-			refsCreated++
+			refsCreated.Add(1)
 			_, _ = w.Write([]byte(`{"ref":"refs/heads/gh-pages"}`))
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
@@ -96,15 +102,15 @@ func TestPushCommitNewBranch(t *testing.T) {
 		{path: "index.html", read: staticContent([]byte("<html>"))},
 		{path: "style.css", read: staticContent([]byte("body{}"))},
 	}
-	commit, err := pushCommit(context.Background(), client, "o", "r", "gh-pages", "msg", entries, false)
+	commit, err := pushCommit(context.Background(), client, "o", "r", "gh-pages", "msg", entries, false, ui.Discard())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if blobs != 2 {
-		t.Errorf("created %d blobs, want 2 (one per entry)", blobs)
+	if got := blobs.Load(); got != 2 {
+		t.Errorf("created %d blobs, want 2 (one per entry)", got)
 	}
-	if refsCreated != 1 {
-		t.Errorf("created %d refs, want 1 (missing branch should be created)", refsCreated)
+	if got := refsCreated.Load(); got != 1 {
+		t.Errorf("created %d refs, want 1 (missing branch should be created)", got)
 	}
 	if commit.GetSHA() != "newcommit" {
 		t.Errorf("commit SHA = %q, want newcommit", commit.GetSHA())
@@ -139,7 +145,7 @@ func TestPushCommitExistingBranch(t *testing.T) {
 	client := newTestClient(t, http.HandlerFunc(handler))
 
 	commit, err := pushCommit(context.Background(), client, "o", "r", "gh-pages", "msg",
-		[]fileEntry{{path: "index.html", read: staticContent([]byte("<html>"))}}, false)
+		[]fileEntry{{path: "index.html", read: staticContent([]byte("<html>"))}}, false, ui.Discard())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,7 +186,7 @@ func TestPushCommitNoChange(t *testing.T) {
 	client := newTestClient(t, http.HandlerFunc(handler))
 
 	commit, err := pushCommit(context.Background(), client, "o", "r", "gh-pages", "msg",
-		[]fileEntry{{path: "index.html", read: staticContent([]byte("<html>"))}}, false)
+		[]fileEntry{{path: "index.html", read: staticContent([]byte("<html>"))}}, false, ui.Discard())
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,12 +1,16 @@
 package github
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"net/http"
 	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/truehhart/htmlup/internal/ui"
 )
 
 func TestPagesURL(t *testing.T) {
@@ -248,17 +252,21 @@ func TestPagesSourceDesc(t *testing.T) {
 	}
 }
 
-func TestPagesRepointPrompt(t *testing.T) {
-	branchPrompt := pagesRepointPrompt("owner/repo", "legacy", "gh-pages", "/docs", "master")
-	for _, want := range []string{"owner/repo", "branch gh-pages (path /docs)", "branch master (path /)", "Repoint Pages to 'master'?", "[y/N]"} {
-		if !strings.Contains(branchPrompt, want) {
-			t.Errorf("branch prompt missing %q, got:\n%s", want, branchPrompt)
-		}
+func TestConfirmRepoint_NonInteractiveDeclines(t *testing.T) {
+	// A non-terminal reader is not interactive, so confirmRepoint must decline
+	// without prompting — an unattended setup never blocks waiting on input.
+	var out bytes.Buffer
+	p := &Provider{repo: "owner/repo"}
+	prompter := ui.NewPrompter(strings.NewReader(""), &out, false)
+	ok, err := p.confirmRepoint(ui.New(io.Discard, &out, false), prompter, "workflow", "", "", "gh-pages")
+	if err != nil {
+		t.Fatalf("confirmRepoint err = %v, want nil", err)
 	}
-
-	wfPrompt := pagesRepointPrompt("owner/repo", "workflow", "", "", "gh-pages")
-	if !strings.Contains(wfPrompt, "a GitHub Actions workflow") {
-		t.Errorf("workflow prompt should name the workflow source, got:\n%s", wfPrompt)
+	if ok {
+		t.Error("confirmRepoint should decline on a non-interactive reader")
+	}
+	if out.Len() != 0 {
+		t.Errorf("non-interactive confirmRepoint should not prompt, got:\n%s", out.String())
 	}
 }
 
@@ -287,7 +295,7 @@ func TestEnablePagesRetriesServerError(t *testing.T) {
 		_, _ = w.Write([]byte(`{"message":"GitHub Pages is already enabled."}`))
 	}))
 
-	if err := enablePages(context.Background(), client, "o", "r", "gh-pages"); err != nil {
+	if err := enablePages(context.Background(), client, "o", "r", "gh-pages", ui.Discard()); err != nil {
 		t.Fatalf("enablePages = %v, want nil (transient 500 then 409 should succeed)", err)
 	}
 	if posts != 2 {
@@ -303,7 +311,7 @@ func TestEnablePagesFailsFastOn4xx(t *testing.T) {
 		_, _ = w.Write([]byte(`{"message":"Forbidden"}`))
 	}))
 
-	err := enablePages(context.Background(), client, "o", "r", "gh-pages")
+	err := enablePages(context.Background(), client, "o", "r", "gh-pages", ui.Discard())
 	if err == nil {
 		t.Fatal("enablePages = nil, want error on 403")
 	}

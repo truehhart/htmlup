@@ -1,16 +1,17 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
-	"golang.org/x/term"
 
 	"github.com/truehhart/htmlup/internal/buildinfo"
 	htmlconfig "github.com/truehhart/htmlup/internal/config"
 	"github.com/truehhart/htmlup/internal/provider"
+	"github.com/truehhart/htmlup/internal/ui"
 	"github.com/truehhart/htmlup/internal/wizard"
 
 	_ "github.com/truehhart/htmlup/internal/provider/github"
@@ -36,6 +37,9 @@ func main() {
 		Version: info.String(),
 	}
 	root.SetVersionTemplate("{{.Version}}\n")
+	// We render errors ourselves through ui (lowercase, consistent voice) instead
+	// of cobra's "Error: …" line, and a user-cancelled prompt exits quietly.
+	root.SilenceErrors = true
 	root.PersistentFlags().StringVar(&configPath, "config", "", "config file path (default: ~/.htmlup/config.toml)")
 	root.AddCommand(newVersionCmd(info))
 	root.AddCommand(newConfigCmd())
@@ -43,9 +47,15 @@ func main() {
 	for _, p := range provider.All() {
 		root.AddCommand(p.Command())
 	}
-	if err := root.Execute(); err != nil {
-		os.Exit(1)
+	err := root.Execute()
+	if err == nil {
+		return
 	}
+	if errors.Is(err, ui.ErrAborted) {
+		os.Exit(130) // 128 + SIGINT, the conventional code for an interrupted run
+	}
+	ui.Auto().Error(err)
+	os.Exit(1)
 }
 
 func newPublishCmd() *cobra.Command {
@@ -59,15 +69,16 @@ func newPublishCmd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cmd.SilenceUsage = true
+			out := ui.Auto()
 			cfg, err := htmlconfig.Load(htmlconfig.PathFromCommand(cmd))
 			if err != nil {
 				return err
 			}
-			result, err := provider.PublishConfigured(cmd.Context(), args[0], cfg, dryRun, verbose)
+			result, err := provider.PublishConfigured(cmd.Context(), args[0], cfg, dryRun, verbose, out)
 			if err != nil {
 				return err
 			}
-			result.PrintURLs()
+			out.Result(result.URLs...)
 			return nil
 		},
 	}
@@ -116,10 +127,14 @@ fail rather than prompt for anything missing.`,
 				return fmt.Errorf("--set-default: %w", err)
 			}
 
+			out := ui.Auto()
+
 			// Non-TTY stdin (pipe, CI) implies non-interactive — there's no one
 			// to answer prompts. Flags + --set still flow through normally.
-			if !nonInteractive && !stdinIsTerminal() {
-				nonInteractive = true
+			interactive := !nonInteractive && ui.DetectTTY(cmd.InOrStdin())
+			var prompter *ui.Prompter
+			if interactive {
+				prompter = out.Prompter(cmd.InOrStdin())
 			}
 
 			result, err := wizard.Run(wizard.Options{
@@ -127,11 +142,10 @@ fail rather than prompt for anything missing.`,
 				ProviderName:   providerName,
 				ProfileName:    profileName,
 				Preset:         preset,
-				NonInteractive: nonInteractive,
+				NonInteractive: !interactive,
 				Force:          force,
 				SetDefault:     setDefault,
-				Stdin:          cmd.InOrStdin(),
-				Stdout:         cmd.OutOrStdout(),
+				Prompter:       prompter,
 			})
 			if err != nil {
 				return err
@@ -141,11 +155,11 @@ fail rather than prompt for anything missing.`,
 			if result.IsNew {
 				verb = "created"
 			}
-			cmd.Printf("%s profile %s.%s in %s\n", verb, result.Provider, result.Profile, result.Path)
+			out.Success("%s profile %s.%s in %s", verb, result.Provider, result.Profile, result.Path)
 			if result.Default {
-				cmd.Printf("set as default profile\n")
+				out.Info("set as the default profile")
 			}
-			cmd.Printf("try: htmlup publish <path>\n")
+			out.Next("htmlup publish <path>")
 			return nil
 		},
 	}
@@ -187,10 +201,6 @@ func parseTristate(s string) (*bool, error) {
 	return nil, fmt.Errorf("expected yes|no, got %q", s)
 }
 
-func stdinIsTerminal() bool {
-	return term.IsTerminal(int(os.Stdin.Fd()))
-}
-
 func newConfigInspectCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "inspect",
@@ -202,7 +212,7 @@ func newConfigInspectCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			cmd.Print(cfg.TOML())
+			ui.Auto().Plain(cfg.TOML())
 			return nil
 		},
 	}
@@ -237,8 +247,8 @@ func newVersionCmd(info buildinfo.Info) *cobra.Command {
 		Use:   "version",
 		Short: "Print version, commit, and build date",
 		Args:  cobra.NoArgs,
-		Run: func(cmd *cobra.Command, _ []string) {
-			cmd.Println(info.String())
+		Run: func(_ *cobra.Command, _ []string) {
+			ui.Auto().Result(info.String())
 		},
 	}
 }

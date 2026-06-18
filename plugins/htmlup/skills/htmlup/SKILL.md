@@ -48,6 +48,8 @@ Useful flags (on each `publish` command):
 - `--dry-run` — preview what would be uploaded and the resulting URL without writing anything. Prefer this first when the target is unfamiliar.
 - `-v, --verbose` — per-file progress.
 
+Parsing the output: the published URLs print to **stdout**, one per line — that's the machine-readable result to read back and hand to the user. Everything else (progress, the dry-run preview, warnings, next-step hints) prints to **stderr**, so reading only stdout gives you a clean URL list even with `--dry-run`.
+
 ## Workflow
 
 1. Confirm the local path exists and what should be published (single page vs. whole directory).

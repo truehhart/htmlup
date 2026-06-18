@@ -5,11 +5,12 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io/fs"
-	"os"
 	"path"
 
 	"github.com/google/go-github/v72/github"
 	"golang.org/x/sync/errgroup"
+
+	"github.com/truehhart/htmlup/internal/ui"
 )
 
 // pushCommit creates blobs for every entry, builds a tree on top of the
@@ -22,6 +23,7 @@ func pushCommit(
 	owner, repo, branch, message string,
 	entries []fileEntry,
 	verbose bool,
+	out *ui.Output,
 ) (*github.Commit, error) {
 	treeEntries := make([]*github.TreeEntry, len(entries))
 	g, gctx := errgroup.WithContext(ctx)
@@ -33,7 +35,7 @@ func pushCommit(
 				return fmt.Errorf("reading %s: %w", e.path, err)
 			}
 			if verbose {
-				fmt.Fprintf(os.Stderr, "creating blob: %s (%d bytes)\n", e.path, len(data))
+				out.Progress("creating blob %s (%d bytes)", e.path, len(data))
 			}
 			blob, _, err := client.Git.CreateBlob(gctx, owner, repo, &github.Blob{
 				Content:  github.Ptr(base64.StdEncoding.EncodeToString(data)),
@@ -88,7 +90,7 @@ func pushCommit(
 	// needlessly re-trigger a Pages build.
 	if branchExists && tree.GetSHA() == baseTree {
 		if verbose {
-			fmt.Fprintf(os.Stderr, "no changes on %s; skipping commit\n", branch)
+			out.Progress("no changes on %s; skipping commit", branch)
 		}
 		return baseCommit, nil
 	}

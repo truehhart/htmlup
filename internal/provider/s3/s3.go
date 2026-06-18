@@ -21,6 +21,7 @@ import (
 	htmlconfig "github.com/truehhart/htmlup/internal/config"
 	"github.com/truehhart/htmlup/internal/fsutil"
 	"github.com/truehhart/htmlup/internal/provider"
+	"github.com/truehhart/htmlup/internal/ui"
 )
 
 func init() {
@@ -93,6 +94,7 @@ func (p *Provider) publishCmd() *cobra.Command {
 			// Flags parsed cleanly; from here errors are runtime failures, not
 			// misuse, so don't tack the usage screen onto them.
 			cmd.SilenceUsage = true
+			out := ui.Auto()
 			profile, _, err := provider.SelectedProfile(cmd, p.Name(), profileName)
 			if err != nil {
 				return err
@@ -109,11 +111,12 @@ func (p *Provider) publishCmd() *cobra.Command {
 				Files:   files,
 				DryRun:  dryRun,
 				Verbose: verbose,
+				UI:      out,
 			})
 			if err != nil {
 				return err
 			}
-			result.PrintURLs()
+			out.Result(result.URLs...)
 			return nil
 		},
 	}
@@ -126,7 +129,7 @@ func (p *Provider) publishCmd() *cobra.Command {
 	return cmd
 }
 
-func (p *Provider) Publish(ctx context.Context, localPath string, profile htmlconfig.Profile, dryRun, verbose bool) (provider.Result, error) {
+func (p *Provider) Publish(ctx context.Context, localPath string, profile htmlconfig.Profile, dryRun, verbose bool, out *ui.Output) (provider.Result, error) {
 	p.applyProfile(profile, nil)
 	if err := p.validate(); err != nil {
 		return provider.Result{}, err
@@ -139,6 +142,7 @@ func (p *Provider) Publish(ctx context.Context, localPath string, profile htmlco
 		Files:   files,
 		DryRun:  dryRun,
 		Verbose: verbose,
+		UI:      out,
 	})
 }
 
@@ -190,8 +194,9 @@ func (p *Provider) publish(ctx context.Context, t provider.Target) (provider.Res
 	}
 
 	if t.DryRun {
+		t.UI.DryRun("would upload %s to s3://%s", ui.Plural(len(entries), "file", "files"), p.bucket)
 		for _, e := range entries {
-			fmt.Fprintf(os.Stderr, "would upload: s3://%s/%s\n", p.bucket, e.key)
+			t.UI.Detail("s3://%s/%s", p.bucket, e.key)
 		}
 		return provider.Result{URLs: urls}, nil
 	}
@@ -202,16 +207,14 @@ func (p *Provider) publish(ctx context.Context, t provider.Target) (provider.Res
 	g.SetLimit(10)
 	for _, e := range entries {
 		g.Go(func() error {
-			return p.uploadObject(gctx, client, t.Files, e, t.Verbose)
+			return p.uploadObject(gctx, client, t.Files, e, t.Verbose, t.UI)
 		})
 	}
 	if err := g.Wait(); err != nil {
 		return provider.Result{}, err
 	}
 
-	if t.Verbose {
-		fmt.Fprintf(os.Stderr, "uploaded %d files to %s\n", len(urls), s3URL(p.bucket, cfg.Region, p.prefix))
-	}
+	t.UI.Success("uploaded %s to %s", ui.Plural(len(urls), "file", "files"), s3URL(p.bucket, cfg.Region, p.prefix))
 
 	return provider.Result{URLs: urls}, nil
 }
@@ -247,7 +250,7 @@ func collectKeys(files fs.FS, prefix string) ([]s3Entry, error) {
 
 // uploadObject streams a single file to S3, inferring its content type from the
 // extension.
-func (p *Provider) uploadObject(ctx context.Context, client *s3svc.Client, files fs.FS, e s3Entry, verbose bool) error {
+func (p *Provider) uploadObject(ctx context.Context, client *s3svc.Client, files fs.FS, e s3Entry, verbose bool, out *ui.Output) error {
 	f, err := files.Open(e.filePath)
 	if err != nil {
 		return err
@@ -265,7 +268,7 @@ func (p *Provider) uploadObject(ctx context.Context, client *s3svc.Client, files
 	}
 
 	if verbose {
-		fmt.Fprintf(os.Stderr, "uploading: s3://%s/%s (%s)\n", p.bucket, e.key, contentType)
+		out.Progress("uploading s3://%s/%s (%s)", p.bucket, e.key, contentType)
 	}
 
 	_, err = client.PutObject(ctx, &s3svc.PutObjectInput{

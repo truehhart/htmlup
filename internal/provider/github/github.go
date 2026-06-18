@@ -3,7 +3,6 @@ package github
 import (
 	"context"
 	"fmt"
-	"os"
 	"path"
 	"strings"
 
@@ -12,6 +11,7 @@ import (
 	htmlconfig "github.com/truehhart/htmlup/internal/config"
 	"github.com/truehhart/htmlup/internal/fsutil"
 	"github.com/truehhart/htmlup/internal/provider"
+	"github.com/truehhart/htmlup/internal/ui"
 )
 
 func init() {
@@ -45,31 +45,10 @@ func (p *Provider) ConfigSchema() []provider.ConfigField {
 				return nil
 			},
 		},
-		{
-			Key:   "branch",
-			Label: "Branch (leave blank to auto-detect from Pages settings)",
-			Help:  "Branch to push to. Leave blank to target whichever branch GitHub Pages already serves; falls back to gh-pages.",
-			Validate: func(v string) error {
-				if v == "" {
-					return nil
-				}
-				if !validBranchName(v) {
-					return fmt.Errorf("not a valid Git branch name")
-				}
-				return nil
-			},
-		},
-		{
-			Key:   "dir",
-			Label: "Directory within the branch (optional)",
-			Help:  "Subdirectory inside the branch to upload into. Leave blank to auto-detect from the Pages source path.",
-			Validate: func(v string) error {
-				if !validPublishDir(v) {
-					return fmt.Errorf("must be a clean relative path")
-				}
-				return nil
-			},
-		},
+		// branch and dir aren't config-init fields. The profile only needs the
+		// repo; at publish time the provider auto-detects whichever branch &
+		// directory GitHub Pages already serves from. Initial Pages setup
+		// (picking the branch) is `htmlup github setup`'s job, not init's.
 	}
 }
 
@@ -97,6 +76,7 @@ func (p *Provider) publishCmd() *cobra.Command {
 			// Flags parsed cleanly; from here errors are runtime failures, not
 			// misuse, so don't tack the usage screen onto them.
 			cmd.SilenceUsage = true
+			out := ui.Auto()
 			profile, _, err := provider.SelectedProfile(cmd, p.Name(), profileName)
 			if err != nil {
 				return err
@@ -116,11 +96,12 @@ func (p *Provider) publishCmd() *cobra.Command {
 				Files:   files,
 				DryRun:  dryRun,
 				Verbose: verbose,
+				UI:      out,
 			}, autoDetect)
 			if err != nil {
 				return err
 			}
-			result.PrintURLs()
+			out.Result(result.URLs...)
 			return nil
 		},
 	}
@@ -134,7 +115,7 @@ func (p *Provider) publishCmd() *cobra.Command {
 	return cmd
 }
 
-func (p *Provider) Publish(ctx context.Context, localPath string, profile htmlconfig.Profile, dryRun, verbose bool) (provider.Result, error) {
+func (p *Provider) Publish(ctx context.Context, localPath string, profile htmlconfig.Profile, dryRun, verbose bool, out *ui.Output) (provider.Result, error) {
 	applied := p.applyProfile(profile, nil)
 	if err := p.validate(); err != nil {
 		return provider.Result{}, err
@@ -148,6 +129,7 @@ func (p *Provider) Publish(ctx context.Context, localPath string, profile htmlco
 		Files:   files,
 		DryRun:  dryRun,
 		Verbose: verbose,
+		UI:      out,
 	}, autoDetect)
 }
 
@@ -254,7 +236,7 @@ func (p *Provider) publish(ctx context.Context, t provider.Target, autoDetect bo
 		if b, d, u, ok := p.autoTarget(ctx, client, owner, repoName); ok {
 			branch, dir, autoURL = b, d, u
 			if t.Verbose {
-				fmt.Fprintf(os.Stderr, "auto-detected Pages source: branch %s, dir %q\n", branch, dir)
+				t.UI.Progress("auto-detected Pages source: branch %s, dir %q", branch, dir)
 			}
 		}
 	}
@@ -287,29 +269,29 @@ func (p *Provider) publish(ctx context.Context, t provider.Target, autoDetect bo
 	urls := publishedURLs(siteURL, entries, dir)
 
 	if t.DryRun {
-		fmt.Fprintf(os.Stderr, "dry run — would publish %s to %s (branch %s%s):\n", entrySummary(entries, dir), p.repo, branch, dirNote(dir))
+		t.UI.DryRun("would publish %s to %s (branch %s%s)", entrySummary(entries, dir), p.repo, branch, dirNote(dir))
 		for _, u := range urls {
-			fmt.Fprintf(os.Stderr, "  → %s\n", u)
+			t.UI.Detail("%s", u)
 		}
 		return provider.Result{URLs: urls}, nil
 	}
 
-	newCommit, err := pushCommit(ctx, client, owner, repoName, branch, publishMessage(entries), entries, t.Verbose)
+	newCommit, err := pushCommit(ctx, client, owner, repoName, branch, publishMessage(entries), entries, t.Verbose, t.UI)
 	if err != nil {
 		return provider.Result{}, err
 	}
 	if t.Verbose {
-		fmt.Fprintf(os.Stderr, "commit: %s\n", newCommit.GetSHA())
+		t.UI.Progress("commit %s", newCommit.GetSHA())
 	}
 
 	// Best-effort for publish: the upload already succeeded, so a Pages-enable
 	// hiccup is a warning, not a failure.
-	if err := p.ensurePages(ctx, client, owner, repoName, branch); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: %v\n", err)
+	if err := p.ensurePages(ctx, client, owner, repoName, branch, t.UI); err != nil {
+		t.UI.Warn("%v", err)
 	}
 
-	// Friendly summary on stderr; the bare per-file URLs go to stdout for piping.
-	fmt.Fprintf(os.Stderr, "✓ published %s to %s (branch %s%s)\n", entrySummary(entries, dir), p.repo, branch, dirNote(dir))
+	// Human summary on stderr; the bare per-file URLs go to stdout for piping.
+	t.UI.Success("published %s to %s (branch %s%s)", entrySummary(entries, dir), p.repo, branch, dirNote(dir))
 	return provider.Result{URLs: urls}, nil
 }
 

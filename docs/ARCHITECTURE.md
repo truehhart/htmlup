@@ -44,7 +44,7 @@ By default `publish` targets wherever GitHub Pages already serves from: it reads
 | `--prefix` | no | key prefix (logical folder) |
 | `--region` | no | overrides region from the AWS config chain |
 
-On success the command prints a public URL per published file, one per line (Pages URLs, or the S3/CloudFront URLs the operator wires up).
+On success the command prints a public URL per published file, one per line, to **stdout** (Pages URLs, or the S3/CloudFront URLs the operator wires up). Human status — progress, dry-run previews, warnings, next-step hints — goes to **stderr**, so `htmlup … > urls.txt` captures only the machine-readable list. See [§7 Output & interaction](#7-output--interaction).
 
 ## 3. Provider abstraction
 
@@ -53,9 +53,10 @@ Backends are pluggable behind one interface so a contributor can add a target wi
 ```go
 // internal/provider
 type Target struct {
-    Files   fs.FS   // resolved local files, relative paths preserved
+    Files   fs.FS       // resolved local files, relative paths preserved
     DryRun  bool
     Verbose bool
+    UI      *ui.Output  // sink for all human status; never printed to os.Stderr directly
 }
 
 type Result struct {
@@ -67,6 +68,8 @@ type Provider interface {
     Command() *cobra.Command   // returns the provider's subcommand tree
 }
 ```
+
+A provider emits every human-facing line through `Target.UI` (or the `*ui.Output` passed to `Publish`); the command layer writes the resulting `Result.URLs` to stdout. No provider touches `os.Stdout`/`os.Stderr` — see [§7](#7-output--interaction).
 
 Providers self-register into a registry (`init()` → `provider.Register(...)`). `cmd/htmlup` discovers them generically: each provider's `Command()` is added as a child of the root cobra command. **Adding a backend = one new package under `internal/provider/<name>/` + registration. No edits to `cmd/htmlup/`.**
 
@@ -98,7 +101,17 @@ The workflow runs on `--cron` (default `0 3 * * 0`, weekly Sun 03:00 UTC) plus `
 
 The MVP only uploads objects. Public exposure is the operator's responsibility, expected via **CloudFront** in front of the bucket. A future (non-MVP) option may let `htmlup` run as a simple static HTTP server over a bucket; it is explicitly out of scope now.
 
-## 7. Distribution
+## 7. Output & interaction
+
+All user-facing text is owned by one package, `internal/ui`, so the CLI speaks with a single voice and the machine/human split stays intact regardless of which command or backend produced the output. It is built on the **charmbracelet** stack — [`lipgloss`](https://github.com/charmbracelet/lipgloss) for status styling and [`huh`](https://github.com/charmbracelet/huh) for interactive prompts — both wrapped so no command or provider imports them directly. Nothing else prints directly either: a guard test (`cmd/htmlup/contract_test.go`) fails the build on a stray `fmt.Print*`, `fmt.Fprintf(os.Stderr, …)`, or `cmd.Print*` outside `internal/ui`.
+
+- **`ui.Output`** routes the two streams. **stdout** carries only machine-readable results — the published URLs (`URLs`), a config dump (`Plain`), the version (`Result`) — so piping stays clean. **stderr** carries human status, styled with lipgloss, via typed helpers: `Info` (neutral), `Success` (green, led by `✓`), `Warn` (yellow `warning:`), `Error` (red `error:` — the one place a returned error is printed, at the top level), `DryRun`/`Next` (cyan labels), `Progress` (faint, verbose-only), and `Detail` (indented continuation, e.g. each previewed URL). Commands build one with `ui.Auto()` and pass it into provider code through `Target.UI` / the `*ui.Output` argument to `Publish`.
+- **`ui.Prompter`** is the only interactive surface: `Line` (free text + default + validation), `Select` (pick from a list), `Confirm` (y/n). On an interactive color terminal it renders a polished huh form; off a TTY or under `NO_COLOR` it falls back to a plain line-based reader with identical behavior (this is also the path unit tests and pipes drive). The `config init` wizard and `github setup`'s repoint confirmation both go through it; `Interactive()` reports whether input is a TTY so an unattended run declines optional prompts instead of blocking. Cancelling a prompt (Ctrl+C) surfaces `ui.ErrAborted`; the root command treats it as a clean cancel — no error line, exit code 130.
+- **Styling is policy, resolved once.** Color (and the leading glyphs) is decorative only and auto-disabled off a TTY and whenever [`NO_COLOR`](https://no-color.org/) is set — meaning always lives in the words, so the no-color path drops every glyph to nothing and renders plain text. `NO_COLOR` also drops huh back to the plain prompts, so honoring it never costs functionality. There is intentionally no `--color` flag: TTY detection plus `NO_COLOR` covers the cases that matter and keeps the surface small.
+
+Adding a backend therefore touches no output code: implement `Provider`, emit through the `ui.Output` you're handed, and the contract holds automatically.
+
+## 8. Distribution
 
 GoReleaser produces static binaries for `linux`/`darwin` × `amd64`/`arm64` (no Windows). Releases are cut by the **manually-triggered `release.yaml`** workflow: it takes a `version` input (without the leading `v`), validates it, and runs the check suite. Only then does publish **create and push the `v<version>` tag and check it out**, so artifacts are built *from the tag*, not from whatever the branch happens to be. **GoReleaser** then builds, signs (cosign keyless + GPG), and publishes the release: tar.gz archives, standalone binaries, and a signed `SHA256SUMS`, with notes from the commit log (`docs:`/`chore:` filtered out). `release.mode: replace` makes a retried release land cleanly, and pushing the tag only after checks pass avoids leaving an orphan tag behind a failed run.
 

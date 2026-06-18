@@ -8,6 +8,7 @@ import (
 
 	"github.com/truehhart/htmlup/internal/config"
 	"github.com/truehhart/htmlup/internal/provider"
+	"github.com/truehhart/htmlup/internal/ui"
 
 	_ "github.com/truehhart/htmlup/internal/provider/github"
 	_ "github.com/truehhart/htmlup/internal/provider/s3"
@@ -248,16 +249,16 @@ func TestRun_UnknownProvider(t *testing.T) {
 func TestRun_Interactive_PromptsForRequired(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
 
-	// Lines, in order: profile name (default), repo (required), branch (default),
-	// dir (default), set-as-default confirm (n/a — first profile, auto).
-	stdin := strings.NewReader("\nacme/site\n\n\n")
+	// Lines: profile name (default), repo (required).
+	// First profile in a fresh config auto-becomes the default, so no
+	// set-as-default confirm.
+	stdin := strings.NewReader("\nacme/site\n")
 	var stdout bytes.Buffer
 
 	res, err := Run(Options{
 		Path:         path,
 		ProviderName: "github",
-		Stdin:        stdin,
-		Stdout:       &stdout,
+		Prompter:     ui.NewPrompter(stdin, &stdout, false),
 	})
 	if err != nil {
 		t.Fatalf("Run: %v\noutput:\n%s", err, stdout.String())
@@ -279,15 +280,14 @@ func TestRun_Interactive_PromptsForRequired(t *testing.T) {
 func TestRun_Interactive_RetriesInvalid(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
 
-	// profile name (default), repo (first invalid, then valid), branch, dir.
-	stdin := strings.NewReader("\nbogus\nacme/site\n\n\n")
+	// profile name (default), repo (first invalid, then valid).
+	stdin := strings.NewReader("\nbogus\nacme/site\n")
 	var stdout bytes.Buffer
 
 	if _, err := Run(Options{
 		Path:         path,
 		ProviderName: "github",
-		Stdin:        stdin,
-		Stdout:       &stdout,
+		Prompter:     ui.NewPrompter(stdin, &stdout, false),
 	}); err != nil {
 		t.Fatalf("Run: %v\noutput:\n%s", err, stdout.String())
 	}

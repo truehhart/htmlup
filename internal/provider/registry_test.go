@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/truehhart/htmlup/internal/config"
+	"github.com/truehhart/htmlup/internal/ui"
 )
 
 func resetRegistry() {
@@ -32,7 +33,7 @@ type mockPublishProvider struct {
 	gotVerbose bool
 }
 
-func (m *mockPublishProvider) Publish(_ context.Context, localPath string, profile config.Profile, dryRun, verbose bool) (Result, error) {
+func (m *mockPublishProvider) Publish(_ context.Context, localPath string, profile config.Profile, dryRun, verbose bool, _ *ui.Output) (Result, error) {
 	m.gotPath = localPath
 	m.gotProfile = profile
 	m.gotDryRun = dryRun
@@ -117,7 +118,7 @@ func TestPublishConfigured(t *testing.T) {
 		},
 	}
 
-	result, err := PublishConfigured(context.Background(), "./site", cfg, true, true)
+	result, err := PublishConfigured(context.Background(), "./site", cfg, true, true, ui.Discard())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +142,7 @@ func TestPublishConfiguredErrorsWithoutDefault(t *testing.T) {
 			},
 		},
 	}
-	_, err := PublishConfigured(context.Background(), "./site", cfg, false, false)
+	_, err := PublishConfigured(context.Background(), "./site", cfg, false, false, ui.Discard())
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -160,7 +161,7 @@ func TestPublishConfiguredUsesOnlyProfileWithoutDefault(t *testing.T) {
 		},
 	}
 
-	if _, err := PublishConfigured(context.Background(), "./site", cfg, false, false); err != nil {
+	if _, err := PublishConfigured(context.Background(), "./site", cfg, false, false, ui.Discard()); err != nil {
 		t.Fatal(err)
 	}
 	if p.gotProfile["repo"] != "owner/repo" {

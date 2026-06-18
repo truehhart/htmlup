@@ -1,12 +1,10 @@
 package github
 
 import (
-	"bufio"
 	"context"
 	_ "embed"
 	"fmt"
 	"html"
-	"os"
 	"strconv"
 	"strings"
 
@@ -14,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/truehhart/htmlup/internal/provider"
+	"github.com/truehhart/htmlup/internal/ui"
 )
 
 // cleanupWorkflowPath is where the cron cleanup workflow is committed in the
@@ -36,17 +35,19 @@ func (p *Provider) setupCmd() *cobra.Command {
 			// Flags parsed cleanly; from here errors are runtime failures, not
 			// misuse, so don't tack the usage screen onto them.
 			cmd.SilenceUsage = true
+			out := ui.Auto()
+			prompter := out.Prompter(cmd.InOrStdin())
 			if err := p.validate(); err != nil {
 				return err
 			}
 			if err := p.validateSetup(); err != nil {
 				return err
 			}
-			result, err := p.setup(cmd.Context(), dryRun, verbose, force)
+			result, err := p.setup(cmd.Context(), dryRun, verbose, force, out, prompter)
 			if err != nil {
 				return err
 			}
-			result.PrintURLs()
+			out.Result(result.URLs...)
 			return nil
 		},
 	}
@@ -90,7 +91,7 @@ func (p *Provider) validateSetup() error {
 	return nil
 }
 
-func (p *Provider) setup(ctx context.Context, dryRun, verbose, force bool) (provider.Result, error) {
+func (p *Provider) setup(ctx context.Context, dryRun, verbose, force bool, out *ui.Output, prompter *ui.Prompter) (provider.Result, error) {
 	owner, repoName := p.ownerRepo()
 
 	token, err := resolveToken(ctx)
@@ -105,12 +106,13 @@ func (p *Provider) setup(ctx context.Context, dryRun, verbose, force bool) (prov
 	workflow := cleanupWorkflowYAML(p.cron, p.ttlDays, p.branch, p.exclude)
 
 	if dryRun {
-		fmt.Fprintf(os.Stderr, "would publish landing page index.html to %s branch %s\n", p.repo, p.branch)
+		out.DryRun("would set up %s for htmlup", p.repo)
+		out.Detail("publish landing page index.html to branch %s", p.branch)
 		if p.cname != "" {
-			fmt.Fprintf(os.Stderr, "would write CNAME for custom domain %s\n", p.cname)
+			out.Detail("write CNAME for custom domain %s", p.cname)
 		}
-		fmt.Fprintf(os.Stderr, "would enable GitHub Pages, or repoint it to branch %s (path /) if it serves a different source\n", p.branch)
-		fmt.Fprintf(os.Stderr, "would install %s to the default branch (cron %q, ttl %d days)\n", cleanupWorkflowPath, p.cron, p.ttlDays)
+		out.Detail("enable GitHub Pages, or repoint it to branch %s (path /) if it serves a different source", p.branch)
+		out.Detail("install %s on the default branch (cron %q, ttl %d days)", cleanupWorkflowPath, p.cron, p.ttlDays)
 		return provider.Result{URLs: []string{url}}, nil
 	}
 
@@ -124,14 +126,14 @@ func (p *Provider) setup(ctx context.Context, dryRun, verbose, force bool) (prov
 	}
 	workflowCommit, err := pushCommit(ctx, client, owner, repoName, defaultBranch,
 		"install htmlup cleanup workflow via htmlup",
-		[]fileEntry{{path: cleanupWorkflowPath, read: staticContent([]byte(workflow))}}, verbose)
+		[]fileEntry{{path: cleanupWorkflowPath, read: staticContent([]byte(workflow))}}, verbose, out)
 	if err != nil {
 		return provider.Result{}, fmt.Errorf("installing cleanup workflow on %s: %w\n"+
 			"hint: the token needs the 'workflow' scope and the default branch (%s) must allow direct pushes",
 			p.repo, err, defaultBranch)
 	}
 	if verbose {
-		fmt.Fprintf(os.Stderr, "workflow commit: %s (branch %s)\n", workflowCommit.GetSHA(), defaultBranch)
+		out.Progress("workflow commit %s (branch %s)", workflowCommit.GetSHA(), defaultBranch)
 	}
 
 	// 2. Publish the hello-world landing page to the Pages branch (creates it),
@@ -141,22 +143,23 @@ func (p *Provider) setup(ctx context.Context, dryRun, verbose, force bool) (prov
 		landingFiles = append(landingFiles, fileEntry{path: "CNAME", read: staticContent([]byte(p.cname + "\n"))})
 	}
 	landingCommit, err := pushCommit(ctx, client, owner, repoName, p.branch,
-		"bootstrap landing page via htmlup", landingFiles, verbose)
+		"bootstrap landing page via htmlup", landingFiles, verbose, out)
 	if err != nil {
 		return provider.Result{}, err
 	}
 	if verbose {
-		fmt.Fprintf(os.Stderr, "landing commit: %s\n", landingCommit.GetSHA())
+		out.Progress("landing commit %s", landingCommit.GetSHA())
 	}
 
 	// 3. Enable Pages on the bootstrapped branch (now that it exists), or offer
 	// to repoint it there if Pages already serves a different source.
-	if err := p.reconcilePages(ctx, client, owner, repoName, p.branch, force); err != nil {
+	if err := p.reconcilePages(ctx, client, owner, repoName, p.branch, force, out, prompter); err != nil {
 		return provider.Result{}, err
 	}
-	if verbose {
-		fmt.Fprintf(os.Stderr, "bootstrapped %s -> %s\n", p.repo, url)
-	}
+
+	out.Success("set up %s for htmlup", p.repo)
+	out.Detail("landing page: %s", url)
+	out.Detail("cleanup workflow installed on the default branch (runs %q, ttl %d days)", p.cron, p.ttlDays)
 
 	return provider.Result{URLs: []string{url}}, nil
 }
@@ -175,10 +178,10 @@ func (p *Provider) defaultBranch(ctx context.Context, client *github.Client, own
 // behind a confirmation prompt so an intentional config is never clobbered
 // silently. --force (or a "yes") repoints; declining (or a non-interactive run)
 // leaves the config alone and warns that the upload may not appear.
-func (p *Provider) reconcilePages(ctx context.Context, client *github.Client, owner, repo, branch string, force bool) error {
+func (p *Provider) reconcilePages(ctx context.Context, client *github.Client, owner, repo, branch string, force bool, out *ui.Output, prompter *ui.Prompter) error {
 	info, _, err := client.Repositories.GetPagesInfo(ctx, owner, repo)
 	if is404(err) {
-		return enablePages(ctx, client, owner, repo, branch) // not enabled yet
+		return enablePages(ctx, client, owner, repo, branch, out) // not enabled yet
 	}
 	if err != nil {
 		return fmt.Errorf("checking GitHub Pages status: %w", err)
@@ -191,11 +194,17 @@ func (p *Provider) reconcilePages(ctx context.Context, client *github.Client, ow
 		return nil // already serving the branch + root path setup targets
 	}
 
-	if !force && !confirmRepoint(pagesRepointPrompt(p.repo, buildType, srcBranch, srcPath, branch)) {
-		fmt.Fprintf(os.Stderr, "warning: left GitHub Pages pointed at its current source; "+
-			"the landing page published to %q may not appear until you repoint Pages "+
-			"(repo Settings → Pages, or re-run setup with --force)\n", branch)
-		return nil
+	if !force {
+		ok, err := p.confirmRepoint(out, prompter, buildType, srcBranch, srcPath, branch)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			out.Warn("left GitHub Pages pointed at its current source; the landing page "+
+				"published to %q may not appear until you repoint Pages (repo Settings → Pages, "+
+				"or re-run setup with --force)", branch)
+			return nil
+		}
 	}
 
 	// Preserve any custom domain: PagesUpdate.CNAME has no omitempty, so a nil
@@ -227,40 +236,22 @@ func pagesRepointNeeded(buildType, srcBranch, srcPath, targetBranch string) bool
 	return buildType == "workflow" || srcBranch != targetBranch || orSlash(srcPath) != "/"
 }
 
-// pagesRepointPrompt renders the current-vs-requested Pages source as a y/N
-// confirmation. Default is no — a bare Enter declines.
-func pagesRepointPrompt(repo, buildType, srcBranch, srcPath, targetBranch string) string {
-	return fmt.Sprintf(
-		"⚠  GitHub Pages source mismatch on %s\n\n"+
-			"      current:  %s\n"+
-			"      setup:    %s\n\n"+
-			"Repoint Pages to '%s'? This can be changed later [y/N]: ",
-		repo,
+// confirmRepoint shows the current-vs-target Pages source and asks whether to
+// repoint, defaulting to no. It returns (false, nil) without prompting when
+// input is not a terminal (CI, piped input), so an unattended setup never
+// blocks — the caller falls back to a warning. A cancelled prompt surfaces
+// ui.ErrAborted so the whole command exits cleanly.
+func (p *Provider) confirmRepoint(out *ui.Output, prompter *ui.Prompter, buildType, srcBranch, srcPath, targetBranch string) (bool, error) {
+	if !prompter.Interactive() {
+		return false, nil
+	}
+	out.Info(
+		"GitHub Pages on %s currently serves %s, but setup targets %s.",
+		p.repo,
 		pagesSourceDesc(buildType, srcBranch, srcPath),
 		pagesSourceDesc("legacy", targetBranch, "/"),
-		targetBranch,
 	)
-}
-
-// confirmRepoint prompts on stderr and reads a y/N answer from stdin, defaulting
-// to no. It returns false without prompting when stdin is not a terminal (CI,
-// piped input), so an unattended setup never blocks waiting on input — the
-// caller falls back to a warning instead.
-func confirmRepoint(prompt string) bool {
-	if fi, err := os.Stdin.Stat(); err != nil || fi.Mode()&os.ModeCharDevice == 0 {
-		return false
-	}
-	fmt.Fprint(os.Stderr, prompt)
-	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
-	if err != nil {
-		return false
-	}
-	switch strings.ToLower(strings.TrimSpace(line)) {
-	case "y", "yes":
-		return true
-	default:
-		return false
-	}
+	return prompter.Confirm(fmt.Sprintf("repoint Pages to branch %s? (you can change this later)", targetBranch), false)
 }
 
 // helloWorldTemplate / cleanupWorkflowTemplate are the real HTML and YAML files

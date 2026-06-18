@@ -66,6 +66,8 @@ htmlup s3 publish ./site --bucket my-bucket [--prefix path/] [--region us-east-1
 
 Each `publish` command also accepts `--dry-run` (enumerate what would be uploaded and the resulting URLs, write nothing) and `-v/--verbose` (per-file progress). On success the command prints a public URL per file, one per line.
 
+Output is split for scripting: the public URLs go to **stdout** (one per line), while progress, dry-run previews, warnings, and next-step hints go to **stderr** — so `htmlup … > urls.txt` captures just the links. Status is colorized only on an interactive terminal and respects [`NO_COLOR`](https://no-color.org/).
+
 ### GitHub Pages cleanup
 
 `htmlup github setup` bootstraps a repo for use with `htmlup` in one shot:

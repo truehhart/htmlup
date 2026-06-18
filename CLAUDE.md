@@ -10,6 +10,7 @@
 - **The publish path does no lifecycle management of uploaded files.** It uploads and exits — it never deletes. GitHub Pages cleanup is delegated to an opt-in cron GitHub Actions workflow in the *target* repo; `htmlup github setup` installs that workflow once (it does the deleting, on a schedule, in the target repo — see ARCHITECTURE). S3 lifecycle is the bucket owner's problem.
 - **Backends are pluggable.** Every target implements the `Provider` interface (`docs/ARCHITECTURE.md`). Adding a backend = one new package + registration, no edits to the core publish flow. Keep it that easy.
 - **CLI command code stays thin.** cobra commands parse flags and delegate; all real logic lives in provider packages and pure helpers with unit tests.
+- **All user-facing output goes through `internal/ui` — never print directly.** No `fmt.Print*`, `fmt.Fprintf(os.Stderr, …)`, or `cmd.Print*` in command or provider code. Construct a `ui.Output` (`ui.Auto()` in a command) and pass it down; emit via `Info`/`Success`/`Warn`/`DryRun`/`Progress`/`Next`/`Detail`, machine results via `Result`/`URLs`/`Plain`, and prompt via `ui.Prompter` (`Line`/`Select`/`Confirm`). Errors are returned, not printed — only the root command renders them, via `ui.Output.Error`; a cancelled prompt returns `ui.ErrAborted` and the root exits 130 without an error line. Status uses green/yellow/red color and leading glyphs (`✓`/`!`/`✗`) on a color TTY, all of which vanish under `NO_COLOR`/non-TTY (glyphs have an empty ASCII fallback). Styling is **lipgloss** and interactive prompts are **huh**, both wrapped inside `internal/ui` — don't import charmbracelet packages from command or provider code; add to the `ui` surface instead. Stdout is reserved for machine-readable results (the published URLs); stderr carries human status and prompts. Keep status lowercase, plain, and action-oriented; color is decorative only (auto-disabled off-TTY and under `NO_COLOR`, which also drops huh back to plain prompts) so meaning must live in the words. A guard test (`cmd/htmlup/contract_test.go`) fails the build on direct-output regressions; widen its `allowedDirs` only with a documented reason.
 - **mise tasks live inline in `mise.toml`** (`[tasks.build]`, `[tasks.check]`, …). Standalone scripts go in `mise-tasks/` (currently just `mise-tasks/setup`) and are **Nushell** (`#!/usr/bin/env nu`); validate with `nu-check` after editing.
 - **Conventional Commits**; **never commit without operator review**.
 
@@ -29,7 +30,8 @@
 
 | Path | Purpose |
 |---|---|
-| `cmd/htmlup/` | binary entrypoint + cobra command wiring |
+| `cmd/htmlup/` | binary entrypoint + cobra command wiring; `contract_test.go` enforces the `internal/ui` output rule |
+| `internal/ui/` | the **only** user-facing output + prompt surface: `Output` (stdout results / stderr status) and `Prompter` (input/select/confirm). Built on **lipgloss** (status styling) + **huh** (interactive prompts), with a plain line-based fallback off-TTY / under `NO_COLOR`; TTY + `NO_COLOR` policy resolved once at construction |
 | `internal/fsutil/` | `ResolveFS` helper (file/dir → `fs.FS`) |
 | `internal/provider/` | `Provider` interface + registry |
 | `internal/provider/github/` | GitHub Pages backend (`go-github`); includes `github setup` (`setup.go`) to bootstrap a target repo |
