@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path"
@@ -98,7 +99,47 @@ func (p *Provider) validate() error {
 	if _, _, ok := splitRepo(p.repo); !ok {
 		return fmt.Errorf("--repo must be in owner/name format")
 	}
+	if !validBranchName(p.branch) {
+		return fmt.Errorf("--branch must be a valid Git branch name")
+	}
+	if !validPublishDir(p.dir) {
+		return fmt.Errorf("--dir must be a clean relative path")
+	}
 	return nil
+}
+
+func validBranchName(branch string) bool {
+	if branch == "" ||
+		strings.HasPrefix(branch, "/") ||
+		strings.HasSuffix(branch, "/") ||
+		strings.HasSuffix(branch, ".") ||
+		strings.Contains(branch, "//") ||
+		strings.Contains(branch, "..") ||
+		strings.Contains(branch, "@{") ||
+		strings.ContainsAny(branch, " ~^:?*[\\") {
+		return false
+	}
+	for _, part := range strings.Split(branch, "/") {
+		if part == "" || part == "." || part == ".." || strings.HasSuffix(part, ".lock") {
+			return false
+		}
+	}
+	return true
+}
+
+func validPublishDir(dir string) bool {
+	if dir == "" {
+		return true
+	}
+	if strings.HasPrefix(dir, "/") || strings.Contains(dir, "\\") || path.Clean(dir) != dir {
+		return false
+	}
+	for _, part := range strings.Split(dir, "/") {
+		if part == "." || part == ".." {
+			return false
+		}
+	}
+	return true
 }
 
 // splitRepo parses an "owner/name" repo string. ok is false when either side is
@@ -202,7 +243,7 @@ func (p *Provider) pagesURL(owner, repo, dir string) string {
 		u = "https://" + owner + ".github.io/" + repo + "/"
 	}
 	if dir != "" {
-		u += dir + "/"
+		u += encodeURLPath(dir) + "/"
 	}
 	return u
 }
@@ -426,10 +467,18 @@ func servedURL(base, entryPath, dir string) string {
 	case sp == "index.html":
 		return base
 	case strings.HasSuffix(sp, "/index.html"):
-		return base + strings.TrimSuffix(sp, "index.html")
+		return base + encodeURLPath(strings.TrimSuffix(sp, "index.html"))
 	default:
-		return base + sp
+		return base + encodeURLPath(sp)
 	}
+}
+
+func encodeURLPath(p string) string {
+	segments := strings.Split(p, "/")
+	for i, s := range segments {
+		segments[i] = url.PathEscape(s)
+	}
+	return strings.Join(segments, "/")
 }
 
 // entrySummary describes the published set for human-readable output.

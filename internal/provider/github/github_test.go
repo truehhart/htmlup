@@ -20,20 +20,31 @@ import (
 func TestValidate(t *testing.T) {
 	tests := []struct {
 		name    string
-		repo    string
+		p       *Provider
 		wantErr bool
 	}{
-		{"valid", "owner/name", false},
-		{"empty", "", true},
-		{"no slash", "ownername", true},
-		{"empty owner", "/name", true},
-		{"empty name", "owner/", true},
-		{"too many slashes", "a/b/c", false},
+		{"valid", &Provider{repo: "owner/name", branch: "gh-pages"}, false},
+		{"repo empty", &Provider{repo: "", branch: "gh-pages"}, true},
+		{"repo no slash", &Provider{repo: "ownername", branch: "gh-pages"}, true},
+		{"repo empty owner", &Provider{repo: "/name", branch: "gh-pages"}, true},
+		{"repo empty name", &Provider{repo: "owner/", branch: "gh-pages"}, true},
+		{"repo too many slashes", &Provider{repo: "a/b/c", branch: "gh-pages"}, false},
+		{"branch empty", &Provider{repo: "owner/name"}, true},
+		{"branch with slash", &Provider{repo: "owner/name", branch: "feature/demo"}, false},
+		{"branch starts with slash", &Provider{repo: "owner/name", branch: "/demo"}, true},
+		{"branch has parent segment", &Provider{repo: "owner/name", branch: "feature..demo"}, true},
+		{"branch has lock suffix", &Provider{repo: "owner/name", branch: "feature/demo.lock"}, true},
+		{"branch has reserved char", &Provider{repo: "owner/name", branch: "feature:demo"}, true},
+		{"dir empty", &Provider{repo: "owner/name", branch: "gh-pages"}, false},
+		{"dir clean nested", &Provider{repo: "owner/name", branch: "gh-pages", dir: "docs/reports"}, false},
+		{"dir absolute", &Provider{repo: "owner/name", branch: "gh-pages", dir: "/docs"}, true},
+		{"dir parent", &Provider{repo: "owner/name", branch: "gh-pages", dir: "../docs"}, true},
+		{"dir not clean", &Provider{repo: "owner/name", branch: "gh-pages", dir: "docs/../site"}, true},
+		{"dir backslash", &Provider{repo: "owner/name", branch: "gh-pages", dir: `docs\site`}, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			p := &Provider{repo: tt.repo}
-			err := p.validate()
+			err := tt.p.validate()
 			if (err != nil) != tt.wantErr {
 				t.Errorf("validate() error = %v, wantErr %v", err, tt.wantErr)
 			}
@@ -84,6 +95,12 @@ func TestPagesURL(t *testing.T) {
 			&Provider{branch: "gh-pages", cname: "example.com", dir: "v2"},
 			"owner", "myrepo",
 			"https://example.com/v2/",
+		},
+		{
+			"dir is URL encoded",
+			&Provider{branch: "gh-pages", dir: "release notes"},
+			"owner", "myrepo",
+			"https://owner.github.io/myrepo/release%20notes/",
 		},
 	}
 	for _, tt := range tests {
@@ -223,6 +240,12 @@ func TestPublishedURLs(t *testing.T) {
 			"",
 			[]string{base + "reports/"},
 		},
+		{
+			"reserved characters are URL encoded",
+			[]fileEntry{{path: "reports/my report #1.html"}},
+			"",
+			[]string{base + "reports/my%20report%20%231.html"},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -246,6 +269,8 @@ func TestServedURL(t *testing.T) {
 		{"index collapses to root", "index.html", "", base},
 		{"nested index collapses to its dir", "reports/index.html", "", base + "reports/"},
 		{"strips source dir", "docs/page.html", "docs", base + "page.html"},
+		{"encodes reserved chars, keeps slashes", "reports/q3 #1.html", "", base + "reports/q3%20%231.html"},
+		{"encodes nested index dir", "team docs/index.html", "", base + "team%20docs/"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
