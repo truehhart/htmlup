@@ -101,7 +101,7 @@
   <div class="brand"><span class="prompt">$ </span>html<span class="up">up</span></div>
   <h1>This page is password-protected</h1>
   <form id="f">
-    <input id="p" type="password" placeholder="Password" autofocus autocomplete="current-password">
+    <input id="p" type="password" placeholder="Password" autocomplete="current-password">
     <button id="b" type="submit">Unlock</button>
     <div class="err" id="e"></div>
   </form>
@@ -113,6 +113,8 @@
 const BLOB = "{{.Blob}}";
 const ITER = {{.Iterations}};
 const enc = new TextEncoder();
+// don't autofocus when embedded in an iframe — it scrolls the parent page
+if (window.self === window.top) document.getElementById("p").focus();
 function bytes(b64) {
   const raw = atob(b64), a = new Uint8Array(raw.length);
   for (let i = 0; i < raw.length; i++) a[i] = raw.charCodeAt(i);
