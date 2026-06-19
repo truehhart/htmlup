@@ -1,9 +1,6 @@
 package config
 
-import (
-	"strings"
-	"testing"
-)
+import "testing"
 
 func TestParseAndSelectProfiles(t *testing.T) {
 	cfg, err := Parse(`
@@ -202,11 +199,13 @@ prefix = "reports/#2026"
 	if err != nil {
 		t.Fatal(err)
 	}
-	out := cfg.TOML()
-	if !strings.Contains(out, `bucket = "my bucket"`) || !strings.Contains(out, `prefix = "reports/#2026"`) {
-		t.Fatalf("TOML() = %s", out)
-	}
-	if _, err := Parse(out); err != nil {
+	got, err := Parse(cfg.TOML())
+	if err != nil {
 		t.Fatalf("round trip parse: %v", err)
+	}
+	profile := got.Providers["s3"]["reports"]
+	// A '#' inside a value must survive (the hand-rolled parser truncated it as a comment).
+	if profile["bucket"] != "my bucket" || profile["prefix"] != "reports/#2026" {
+		t.Fatalf("round trip = %#v", profile)
 	}
 }

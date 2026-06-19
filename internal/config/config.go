@@ -1,14 +1,13 @@
 package config
 
 import (
-	"bufio"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
-	"strconv"
 	"strings"
+
+	"github.com/pelletier/go-toml/v2"
 )
 
 const DefaultRelPath = ".htmlup/config.toml"
@@ -16,8 +15,8 @@ const DefaultRelPath = ".htmlup/config.toml"
 type Profile map[string]string
 
 type Config struct {
-	Default   string
-	Providers map[string]map[string]Profile
+	Default   string                        `toml:"default,omitempty"`
+	Providers map[string]map[string]Profile `toml:"providers,omitempty"`
 }
 
 func Empty() Config {
@@ -65,7 +64,11 @@ func Save(path string, cfg Config) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("creating config directory: %w", err)
 	}
-	if err := os.WriteFile(path, []byte(cfg.TOML()), 0o600); err != nil {
+	data, err := toml.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("encoding config: %w", err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
 		return fmt.Errorf("writing config: %w", err)
 	}
 	return nil
@@ -73,90 +76,19 @@ func Save(path string, cfg Config) error {
 
 func Parse(input string) (Config, error) {
 	cfg := Empty()
-	var currentProvider, currentProfile string
-
-	scanner := bufio.NewScanner(strings.NewReader(input))
-	for lineNo := 1; scanner.Scan(); lineNo++ {
-		line := stripComment(scanner.Text())
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		if strings.HasPrefix(line, "[") {
-			if !strings.HasSuffix(line, "]") {
-				return Config{}, fmt.Errorf("line %d: malformed table header", lineNo)
-			}
-			parts := strings.Split(strings.TrimSuffix(strings.TrimPrefix(line, "["), "]"), ".")
-			if len(parts) != 3 || parts[0] != "providers" || parts[1] == "" || parts[2] == "" {
-				return Config{}, fmt.Errorf("line %d: expected [providers.<provider>.<profile>]", lineNo)
-			}
-			if !validName(parts[1]) || !validName(parts[2]) {
-				return Config{}, fmt.Errorf("line %d: provider and profile names may only contain letters, numbers, underscores, and hyphens", lineNo)
-			}
-			currentProvider, currentProfile = parts[1], parts[2]
-			ensureProfile(cfg, currentProvider, currentProfile)
-			continue
-		}
-		key, value, ok := strings.Cut(line, "=")
-		if !ok {
-			return Config{}, fmt.Errorf("line %d: expected key = \"value\"", lineNo)
-		}
-		key = strings.TrimSpace(key)
-		value = strings.TrimSpace(value)
-		if key == "" {
-			return Config{}, fmt.Errorf("line %d: empty key", lineNo)
-		}
-		if !validName(key) {
-			return Config{}, fmt.Errorf("line %d: key names may only contain letters, numbers, underscores, and hyphens", lineNo)
-		}
-		decoded, err := strconv.Unquote(value)
-		if err != nil {
-			return Config{}, fmt.Errorf("line %d: values must be quoted strings", lineNo)
-		}
-		if currentProvider == "" {
-			if key != "default" {
-				return Config{}, fmt.Errorf("line %d: unsupported top-level key %q", lineNo, key)
-			}
-			cfg.Default = decoded
-			continue
-		}
-		cfg.Providers[currentProvider][currentProfile][key] = decoded
-	}
-	if err := scanner.Err(); err != nil {
+	if err := toml.Unmarshal([]byte(input), &cfg); err != nil {
 		return Config{}, err
+	}
+	if cfg.Providers == nil {
+		cfg.Providers = map[string]map[string]Profile{}
 	}
 	return cfg, nil
 }
 
 func (cfg Config) TOML() string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "default = %s\n", strconv.Quote(cfg.Default))
-
-	providers := make([]string, 0, len(cfg.Providers))
-	for provider := range cfg.Providers {
-		providers = append(providers, provider)
-	}
-	sort.Strings(providers)
-	for _, provider := range providers {
-		profiles := make([]string, 0, len(cfg.Providers[provider]))
-		for profile := range cfg.Providers[provider] {
-			profiles = append(profiles, profile)
-		}
-		sort.Strings(profiles)
-		for _, profile := range profiles {
-			b.WriteString("\n")
-			fmt.Fprintf(&b, "[providers.%s.%s]\n", provider, profile)
-			keys := make([]string, 0, len(cfg.Providers[provider][profile]))
-			for key := range cfg.Providers[provider][profile] {
-				keys = append(keys, key)
-			}
-			sort.Strings(keys)
-			for _, key := range keys {
-				fmt.Fprintf(&b, "%s = %s\n", key, strconv.Quote(cfg.Providers[provider][profile][key]))
-			}
-		}
-	}
-	return b.String()
+	// ponytail: only `config inspect` reads this; a struct of strings never fails to marshal.
+	data, _ := toml.Marshal(cfg)
+	return string(data)
 }
 
 func (cfg Config) DefaultProviderProfile() (provider, profile string, ok bool) {
@@ -283,27 +215,4 @@ func ensureProfile(cfg Config, providerName, profileName string) {
 	if cfg.Providers[providerName][profileName] == nil {
 		cfg.Providers[providerName][profileName] = Profile{}
 	}
-}
-
-func stripComment(line string) string {
-	inQuote := false
-	escaped := false
-	for i, r := range line {
-		if escaped {
-			escaped = false
-			continue
-		}
-		if r == '\\' && inQuote {
-			escaped = true
-			continue
-		}
-		if r == '"' {
-			inQuote = !inQuote
-			continue
-		}
-		if r == '#' && !inQuote {
-			return line[:i]
-		}
-	}
-	return line
 }
