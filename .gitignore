@@ -17,3 +17,6 @@ RESEARCH.md
 .idea/
 .vscode/
 .DS_Store
+
+# Assistant tooling (local)
+.serena/
