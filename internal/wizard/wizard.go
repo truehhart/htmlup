@@ -144,11 +144,7 @@ func resolveProvider(pr *ui.Prompter, opts Options) (string, []provider.ConfigFi
 	if !ok {
 		return "", nil, fmt.Errorf("unknown provider %q (known: %s)", name, strings.Join(names, ", "))
 	}
-	schemaProvider, ok := p.(provider.ConfigSchemaProvider)
-	if !ok {
-		return "", nil, fmt.Errorf("provider %q does not declare a config schema yet", name)
-	}
-	return name, schemaProvider.ConfigSchema(), nil
+	return name, p.ConfigSchema(), nil
 }
 
 func resolveProfileName(pr *ui.Prompter, opts Options) (string, error) {

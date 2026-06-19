@@ -569,10 +569,10 @@ brew install --cask htmlup</pre>
             <div class="cap">GitHub Pages</div>
             <button class="copy" type="button">copy</button>
             <pre><span class="cmt"># branch &amp; dir auto-detected from the repo's Pages settings</span>
-htmlup github publish ./claude-html-reports <span class="flag">--repo</span> truehhart/share
+htmlup publish github ./claude-html-reports <span class="flag">--repo</span> truehhart/share
 
 <span class="cmt"># manual targeting (skips auto-detect); preview with --dry-run</span>
-htmlup github publish ./claude-html-reports <span class="flag">--repo</span> truehhart/share \
+htmlup publish github ./claude-html-reports <span class="flag">--repo</span> truehhart/share \
   <span class="flag">--branch</span> gh-pages <span class="flag">--dir</span> reports <span class="flag">--dry-run</span></pre>
           </div>
 
@@ -580,10 +580,10 @@ htmlup github publish ./claude-html-reports <span class="flag">--repo</span> tru
             <div class="cap">S3 (exposed via CloudFront)</div>
             <button class="copy" type="button">copy</button>
             <pre><span class="cmt"># upload objects to a bucket</span>
-htmlup s3 publish ./site <span class="flag">--bucket</span> my-bucket
+htmlup publish s3 ./site <span class="flag">--bucket</span> my-bucket
 
 <span class="cmt"># with key prefix and explicit region</span>
-htmlup s3 publish ./site <span class="flag">--bucket</span> my-bucket \
+htmlup publish s3 ./site <span class="flag">--bucket</span> my-bucket \
   <span class="flag">--prefix</span> path/ <span class="flag">--region</span> us-east-1</pre>
           </div>
 
@@ -765,7 +765,7 @@ gh auth login   <span class="cmt"># missing token? actionable error points you h
 
         var steps = [
           { t: "$ ", cls: "pmt" },
-          { t: "htmlup github publish ./claude-html-reports ", cls: "cmd" },
+          { t: "htmlup publish github ./claude-html-reports ", cls: "cmd" },
           { t: "--repo truehhart/share\n", cls: "flag" },
           {
             t: "✓ published 3 files to truehhart/share (branch main)\n",

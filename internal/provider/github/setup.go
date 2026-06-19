@@ -19,14 +19,14 @@ import (
 // target repo's default branch.
 const cleanupWorkflowPath = ".github/workflows/htmlup-cleanup.yaml"
 
-func (p *Provider) setupCmd() *cobra.Command {
+func (p *Provider) SetupCommand() *cobra.Command {
 	var (
 		dryRun  bool
 		verbose bool
 		force   bool
 	)
 	cmd := &cobra.Command{
-		Use:   "setup",
+		Use:   "github",
 		Short: "Bootstrap a GitHub Pages repo for use with htmlup",
 		Long: "Enable GitHub Pages on the target repo, publish a hello-world landing page " +
 			"to the Pages branch, and install an opt-in cron cleanup workflow on the default branch.",

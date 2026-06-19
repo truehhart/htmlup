@@ -27,19 +27,26 @@ type Result struct {
 	URLs []string
 }
 
+// Provider is a publish backend. Every backend supports the same two publish
+// paths — flag-driven (PublishCommand, the `htmlup publish <name>` subcommand)
+// and config-driven (Publish, dispatched by bare `htmlup publish`) — and
+// declares the profile fields `htmlup config init` prompts for (ConfigSchema).
 type Provider interface {
 	Name() string
-	Command() *cobra.Command
-}
-
-type PublishProvider interface {
-	Provider
+	ConfigSchema() []ConfigField
+	PublishCommand() *cobra.Command
 	Publish(ctx context.Context, localPath string, profile config.Profile, dryRun, verbose bool, out *ui.Output) (Result, error)
 }
 
-// ConfigField describes one key a provider stores in its config profile.
-// Providers expose these via ConfigSchemaProvider so `htmlup config init` can
-// prompt for them without baking provider-specific knowledge into the CLI.
+// Setupper is an optional capability: a backend that bootstraps its target
+// (e.g. GitHub Pages) exposes its `htmlup setup <name>` subcommand here.
+type Setupper interface {
+	SetupCommand() *cobra.Command
+}
+
+// ConfigField describes one key a provider stores in its config profile, so
+// `htmlup config init` can prompt for it without baking provider-specific
+// knowledge into the CLI.
 type ConfigField struct {
 	Key      string        // profile key, e.g. "repo"
 	Label    string        // prompt label, e.g. "Repository (owner/name)"
@@ -47,9 +54,4 @@ type ConfigField struct {
 	Required bool          // empty input is rejected
 	Default  func() string // resolved default (env-derived, gh CLI, etc.); empty when unset
 	Validate func(value string) error
-}
-
-type ConfigSchemaProvider interface {
-	Provider
-	ConfigSchema() []ConfigField
 }

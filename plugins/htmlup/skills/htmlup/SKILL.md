@@ -7,7 +7,7 @@ description: Publish HTML pages to the public web with the htmlup CLI — upload
 
 `htmlup` takes local HTML (a single file or a directory of static assets) and makes it publicly reachable. It is stateless: it uploads and exits, and does no lifecycle management of what it publishes.
 
-> **Status:** working software, early days. The GitHub Pages and S3 publish flows and `github setup` are implemented. The CLI is still evolving, so verify against `htmlup --help` if a flag seems off.
+> **Status:** working software, early days. The GitHub Pages and S3 publish flows and `setup github` are implemented. The CLI is still evolving, so verify against `htmlup --help` if a flag seems off.
 
 ## Decide the backend
 
@@ -30,15 +30,15 @@ Each provider is a top-level subcommand; its flags are scoped to that provider's
 GitHub Pages:
 
 ```sh
-htmlup github publish <path> --repo owner/repo [--no-auto --branch gh-pages --dir docs]
+htmlup publish github <path> --repo owner/repo [--no-auto --branch gh-pages --dir docs]
 ```
 
-By default the target branch and subdirectory are auto-detected from the repo's existing GitHub Pages source, so a plain `htmlup github publish <path> --repo owner/repo` lands where Pages already serves. Pass `--branch`/`--dir` (or `--no-auto`) only for manual targeting; it falls back to `gh-pages` when Pages isn't set up. `publish` reads an existing `CNAME` to report the custom-domain URL but never writes one — configure a custom domain with `github setup --cname`.
+By default the target branch and subdirectory are auto-detected from the repo's existing GitHub Pages source, so a plain `htmlup publish github <path> --repo owner/repo` lands where Pages already serves. Pass `--branch`/`--dir` (or `--no-auto`) only for manual targeting; it falls back to `gh-pages` when Pages isn't set up. `publish` reads an existing `CNAME` to report the custom-domain URL but never writes one — configure a custom domain with `setup github --cname`.
 
 S3 (exposed via CloudFront):
 
 ```sh
-htmlup s3 publish <path> --bucket my-bucket [--prefix path/] [--region us-east-1]
+htmlup publish s3 <path> --bucket my-bucket [--prefix path/] [--region us-east-1]
 ```
 
 `<path>` is a single `.html` file or a directory (uploaded recursively, relative structure preserved).
@@ -60,5 +60,5 @@ Parsing the output: the published URLs print to **stdout**, one per line — tha
 
 ## Notes
 
-- `htmlup` does not expire or clean up old uploads on its own. For GitHub Pages, `htmlup github setup --repo owner/name [--branch gh-pages] [--ttl-days 30] [--cron "0 3 * * 0"] [--cname example.com] [--exclude staging,*.keep]` bootstraps a repo: it publishes a hello-world landing page (plus a CNAME file when `--cname` is given), enables Pages, and installs an opt-in cron cleanup workflow (`.github/workflows/htmlup-cleanup.yaml`) on the repo's default branch. That workflow deletes published top-level entries older than `--ttl-days` and never touches `index.html`, `CNAME`, `.nojekyll`, `.github`, or any extra `--exclude` glob patterns; removals land as a GitHub-signed commit. Suggest it if the user asks about cleanup or is setting up a fresh Pages repo.
+- `htmlup` does not expire or clean up old uploads on its own. For GitHub Pages, `htmlup setup github --repo owner/name [--branch gh-pages] [--ttl-days 30] [--cron "0 3 * * 0"] [--cname example.com] [--exclude staging,*.keep]` bootstraps a repo: it publishes a hello-world landing page (plus a CNAME file when `--cname` is given), enables Pages, and installs an opt-in cron cleanup workflow (`.github/workflows/htmlup-cleanup.yaml`) on the repo's default branch. That workflow deletes published top-level entries older than `--ttl-days` and never touches `index.html`, `CNAME`, `.nojekyll`, `.github`, or any extra `--exclude` glob patterns; removals land as a GitHub-signed commit. Suggest it if the user asks about cleanup or is setting up a fresh Pages repo.
 - Windows is not supported; binaries are `linux`/`darwin` on `amd64`/`arm64`.

@@ -13,7 +13,7 @@ Two backends ship today:
 - **GitHub Pages** — pushes your files to a repo and lets GitHub Pages serve them.
 - **S3** — uploads objects to a bucket, exposed via CloudFront (a built-in HTTP server may come later).
 
-`htmlup` does **no lifecycle management** of what it uploads — it publishes and exits. For GitHub Pages, `htmlup github setup` can install an opt-in cron GitHub Actions workflow in the target repo to expire old pages automatically (see [GitHub Pages cleanup](#github-pages-cleanup) and [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)).
+`htmlup` does **no lifecycle management** of what it uploads — it publishes and exits. For GitHub Pages, `htmlup setup github` can install an opt-in cron GitHub Actions workflow in the target repo to expire old pages automatically (see [GitHub Pages cleanup](#github-pages-cleanup) and [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)).
 
 ## Stack
 
@@ -21,7 +21,7 @@ Go 1.26 · [cobra](https://github.com/spf13/cobra) CLI · [`aws-sdk-go-v2`](http
 
 Architecture & command reference: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Agent conventions: [`CLAUDE.md`](CLAUDE.md).
 
-> **Status:** working software, early days. The GitHub Pages and S3 publish flows and `github setup` are implemented; expect rough edges and an evolving feature set.
+> **Status:** working software, early days. The GitHub Pages and S3 publish flows and `setup github` are implemented; expect rough edges and an evolving feature set.
 
 ## Install
 
@@ -52,16 +52,19 @@ mise run check      # fmt + vet + lint + test (also runs on pre-commit)
 
 ## Usage
 
-Each provider is a top-level subcommand; its flags are scoped to that command. `<path>` is a single `.html` file or a directory (uploaded recursively, relative structure preserved).
+`publish` is one verb: with no provider it runs your configured default profile (`htmlup publish ./site`); naming a provider picks a flag-driven subcommand whose flags are scoped to it. `<path>` is a single `.html` file or a directory (uploaded recursively, relative structure preserved).
 
-By default `github publish` targets wherever GitHub Pages already serves from (its branch + source path are auto-detected), so you usually don't pass `--branch`/`--dir`. Set them explicitly — or pass `--no-auto` — for manual targeting (falls back to `gh-pages` when Pages isn't set up yet). If the target has a `CNAME` file, `publish` reads it to report the custom-domain URL and leaves it in place; it never writes one (use `github setup --cname` to configure a custom domain).
+By default `publish github` targets wherever GitHub Pages already serves from (its branch + source path are auto-detected), so you usually don't pass `--branch`/`--dir`. Set them explicitly — or pass `--no-auto` — for manual targeting (falls back to `gh-pages` when Pages isn't set up yet). If the target has a `CNAME` file, it reads it to report the custom-domain URL and leaves it in place; it never writes one (use `setup github --cname` to configure a custom domain).
 
 ```sh
+# Configured default profile — no flags
+htmlup publish ./site
+
 # GitHub Pages — branch/dir auto-detected from the repo's Pages settings
-htmlup github publish ./site --repo owner/repo [--no-auto --branch gh-pages --dir docs]
+htmlup publish github ./site --repo owner/repo [--no-auto --branch gh-pages --dir docs]
 
 # S3 (exposed via CloudFront)
-htmlup s3 publish ./site --bucket my-bucket [--prefix path/] [--region us-east-1]
+htmlup publish s3 ./site --bucket my-bucket [--prefix path/] [--region us-east-1]
 ```
 
 Each `publish` command also accepts `--dry-run` (enumerate what would be uploaded and the resulting URLs, write nothing) and `-v/--verbose` (per-file progress). On success the command prints a public URL per file, one per line.
@@ -70,10 +73,10 @@ Output is split for scripting: the public URLs go to **stdout** (one per line), 
 
 ### GitHub Pages cleanup
 
-`htmlup github setup` bootstraps a repo for use with `htmlup` in one shot:
+`htmlup setup github` bootstraps a repo for use with `htmlup` in one shot:
 
 ```sh
-htmlup github setup --repo owner/name [--branch gh-pages] [--ttl-days 30] [--cron "0 3 * * 0"] [--cname example.com] [--exclude staging,*.keep] [--dry-run] [-v]
+htmlup setup github --repo owner/name [--branch gh-pages] [--ttl-days 30] [--cron "0 3 * * 0"] [--cname example.com] [--exclude staging,*.keep] [--dry-run] [-v]
 ```
 
 It:

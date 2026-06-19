@@ -52,24 +52,10 @@ func (p *Provider) ConfigSchema() []provider.ConfigField {
 	}
 }
 
-func (p *Provider) Command() *cobra.Command {
+func (p *Provider) PublishCommand() *cobra.Command {
+	var profileName string
 	cmd := &cobra.Command{
-		Use:   "github",
-		Short: "GitHub Pages operations",
-	}
-	cmd.AddCommand(p.publishCmd())
-	cmd.AddCommand(p.setupCmd())
-	return cmd
-}
-
-func (p *Provider) publishCmd() *cobra.Command {
-	var (
-		dryRun      bool
-		verbose     bool
-		profileName string
-	)
-	cmd := &cobra.Command{
-		Use:   "publish <path>",
+		Use:   "github <path>",
 		Short: "Publish HTML to GitHub Pages",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -77,6 +63,8 @@ func (p *Provider) publishCmd() *cobra.Command {
 			// misuse, so don't tack the usage screen onto them.
 			cmd.SilenceUsage = true
 			out := ui.Auto()
+			dryRun, _ := cmd.Flags().GetBool("dry-run")
+			verbose, _ := cmd.Flags().GetBool("verbose")
 			profile, _, err := provider.SelectedProfile(cmd, p.Name(), profileName)
 			if err != nil {
 				return err
@@ -110,8 +98,6 @@ func (p *Provider) publishCmd() *cobra.Command {
 	cmd.Flags().StringVar(&p.dir, "dir", "", "subdirectory within the branch (default: auto-detected from Pages settings)")
 	cmd.Flags().BoolVar(&p.noAuto, "no-auto", false, "don't auto-detect the target from GitHub Pages settings; use --branch/--dir as given")
 	cmd.Flags().StringVar(&profileName, "profile", "", "config profile name to use for github")
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show what would be uploaded without writing")
-	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "per-file progress and SDK detail")
 	return cmd
 }
 

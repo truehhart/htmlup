@@ -304,11 +304,7 @@ func TestProvidersImplementConfigSchema(t *testing.T) {
 		if !ok {
 			t.Fatalf("provider %q not registered", name)
 		}
-		sp, ok := p.(provider.ConfigSchemaProvider)
-		if !ok {
-			t.Fatalf("provider %q must implement ConfigSchemaProvider", name)
-		}
-		schema := sp.ConfigSchema()
+		schema := p.ConfigSchema()
 		if len(schema) == 0 {
 			t.Fatalf("provider %q returned empty schema", name)
 		}

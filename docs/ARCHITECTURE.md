@@ -9,21 +9,21 @@
 ## 2. Command surface
 
 ```
-htmlup <provider> publish <path> [flags]
+htmlup publish [<provider>] <path> [flags]
 ```
 
-Each provider is a top-level subcommand. Provider-specific flags are scoped to the provider's `publish` command — no flag collisions are possible.
+`publish` is one verb. With no provider it runs the configured default profile (see §5) — `htmlup publish ./site`, no flags. Naming a provider selects a flag-driven subcommand (`htmlup publish github <path> …`, `htmlup publish s3 <path> …`); provider-specific flags are scoped to that subcommand, so no flag collisions are possible.
 
 - `<path>` — a single `.html` file or a directory of static assets. Directories upload recursively, preserving relative structure.
 
-**Common flags** (on every provider's `publish` command)
+**Common flags** (on every provider's `publish` subcommand)
 
 | Flag | Purpose |
 |---|---|
 | `--dry-run` | enumerate what would be uploaded and the resulting URLs; perform no writes |
 | `-v, --verbose` | per-file progress and SDK-level detail |
 
-**`htmlup github publish`**
+**`htmlup publish github`**
 
 | Flag | Required | Purpose |
 |---|---|---|
@@ -32,11 +32,11 @@ Each provider is a top-level subcommand. Provider-specific flags are scoped to t
 | `--dir` | no | subdirectory within the branch (default: auto-detected from the Pages source path) |
 | `--no-auto` | no | disable Pages auto-detection; use `--branch`/`--dir` as given |
 
-By default `publish` targets wherever GitHub Pages already serves from: it reads the repo's Pages source (branch + path) and pushes there, so a plain `htmlup github publish ./site --repo owner/name` lands in the right place. Setting `--branch`/`--dir` explicitly (or `--no-auto`) switches to manual targeting; if Pages is off or built from a workflow, it falls back to `gh-pages`.
+By default it targets wherever GitHub Pages already serves from: it reads the repo's Pages source (branch + path) and pushes there, so a plain `htmlup publish github ./site --repo owner/name` lands in the right place. Setting `--branch`/`--dir` explicitly (or `--no-auto`) switches to manual targeting; if Pages is off or built from a workflow, it falls back to `gh-pages`.
 
-`publish` does not write a `CNAME` — it only **reads** an existing one at the target's source root to report the custom-domain URL, and (because it merges onto the branch's tree) leaves it untouched. Configuring a custom domain is `htmlup github setup --cname`'s job.
+It does not write a `CNAME` — it only **reads** an existing one at the target's source root to report the custom-domain URL, and (because it merges onto the branch's tree) leaves it untouched. Configuring a custom domain is `htmlup setup github --cname`'s job.
 
-**`htmlup s3 publish`**
+**`htmlup publish s3`**
 
 | Flag | Required | Purpose |
 |---|---|---|
@@ -64,14 +64,21 @@ type Result struct {
 }
 
 type Provider interface {
-    Name() string              // registry key, also the subcommand name
-    Command() *cobra.Command   // returns the provider's subcommand tree
+    Name() string                       // registry key, also the subcommand name
+    ConfigSchema() []ConfigField        // profile fields `config init` prompts for
+    PublishCommand() *cobra.Command     // flag-driven `publish <name>` subcommand
+    Publish(ctx, localPath, profile, dryRun, verbose, out) (Result, error) // config-driven
+}
+
+// Optional: a backend that bootstraps its target implements Setupper.
+type Setupper interface {
+    SetupCommand() *cobra.Command       // `setup <name>` subcommand
 }
 ```
 
 A provider emits every human-facing line through `Target.UI` (or the `*ui.Output` passed to `Publish`); the command layer writes the resulting `Result.URLs` to stdout. No provider touches `os.Stdout`/`os.Stderr` — see [§7](#7-output--interaction).
 
-Providers self-register into a registry (`init()` → `provider.Register(...)`). `cmd/htmlup` discovers them generically: each provider's `Command()` is added as a child of the root cobra command. **Adding a backend = one new package under `internal/provider/<name>/` + registration. No edits to `cmd/htmlup/`.**
+Providers self-register into a registry (`init()` → `provider.Register(...)`). `cmd/htmlup` discovers them generically: each provider's `PublishCommand()` is hung under the root `publish` command, and any provider implementing `Setupper` contributes a subcommand under `setup`. **Adding a backend = one new package under `internal/provider/<name>/` + registration. No edits to `cmd/htmlup/`.**
 
 MVP providers:
 
@@ -89,7 +96,7 @@ MVP providers:
 
 The publish path itself never deletes anything. For users who want pages to expire, we offer an **opt-in cron GitHub Actions workflow installed in the target repo** (not in this repo, not run by the CLI at publish time). It periodically removes published top-level entries older than a configured TTL based on each entry's last-commit date.
 
-`htmlup github setup --repo owner/name` installs this workflow in one shot. It:
+`htmlup setup github --repo owner/name` installs this workflow in one shot. It:
 
 1. publishes a generated hello-world `index.html` to the Pages branch (default `gh-pages`), plus a `CNAME` file when `--cname` is given,
 2. enables GitHub Pages (branch source, path `/`), and
@@ -106,7 +113,7 @@ The MVP only uploads objects. Public exposure is the operator's responsibility, 
 All user-facing text is owned by one package, `internal/ui`, so the CLI speaks with a single voice and the machine/human split stays intact regardless of which command or backend produced the output. It is built on the **charmbracelet** stack — [`lipgloss`](https://github.com/charmbracelet/lipgloss) for status styling and [`huh`](https://github.com/charmbracelet/huh) for interactive prompts — both wrapped so no command or provider imports them directly. Nothing else prints directly either: a guard test (`cmd/htmlup/contract_test.go`) fails the build on a stray `fmt.Print*`, `fmt.Fprintf(os.Stderr, …)`, or `cmd.Print*` outside `internal/ui`.
 
 - **`ui.Output`** routes the two streams. **stdout** carries only machine-readable results — the published URLs (`URLs`), a config dump (`Plain`), the version (`Result`) — so piping stays clean. **stderr** carries human status, styled with lipgloss, via typed helpers: `Info` (neutral), `Success` (green, led by `✓`), `Warn` (yellow `warning:`), `Error` (red `error:` — the one place a returned error is printed, at the top level), `DryRun`/`Next` (cyan labels), `Progress` (faint, verbose-only), and `Detail` (indented continuation, e.g. each previewed URL). Commands build one with `ui.Auto()` and pass it into provider code through `Target.UI` / the `*ui.Output` argument to `Publish`.
-- **`ui.Prompter`** is the only interactive surface: `Line` (free text + default + validation), `Select` (pick from a list), `Confirm` (y/n). On an interactive color terminal it renders a polished huh form; off a TTY or under `NO_COLOR` it falls back to a plain line-based reader with identical behavior (this is also the path unit tests and pipes drive). The `config init` wizard and `github setup`'s repoint confirmation both go through it; `Interactive()` reports whether input is a TTY so an unattended run declines optional prompts instead of blocking. Cancelling a prompt (Ctrl+C) surfaces `ui.ErrAborted`; the root command treats it as a clean cancel — no error line, exit code 130.
+- **`ui.Prompter`** is the only interactive surface: `Line` (free text + default + validation), `Select` (pick from a list), `Confirm` (y/n). On an interactive color terminal it renders a polished huh form; off a TTY or under `NO_COLOR` it falls back to a plain line-based reader with identical behavior (this is also the path unit tests and pipes drive). The `config init` wizard and `setup github`'s repoint confirmation both go through it; `Interactive()` reports whether input is a TTY so an unattended run declines optional prompts instead of blocking. Cancelling a prompt (Ctrl+C) surfaces `ui.ErrAborted`; the root command treats it as a clean cancel — no error line, exit code 130.
 - **Styling is policy, resolved once.** Color (and the leading glyphs) is decorative only and auto-disabled off a TTY and whenever [`NO_COLOR`](https://no-color.org/) is set — meaning always lives in the words, so the no-color path drops every glyph to nothing and renders plain text. `NO_COLOR` also drops huh back to the plain prompts, so honoring it never costs functionality. There is intentionally no `--color` flag: TTY detection plus `NO_COLOR` covers the cases that matter and keeps the surface small.
 
 Adding a backend therefore touches no output code: implement `Provider`, emit through the `ui.Output` you're handed, and the contract holds automatically.

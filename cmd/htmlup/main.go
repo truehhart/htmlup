@@ -43,9 +43,22 @@ func main() {
 	root.PersistentFlags().StringVar(&configPath, "config", "", "config file path (default: ~/.htmlup/config.toml)")
 	root.AddCommand(newVersionCmd(info))
 	root.AddCommand(newConfigCmd())
-	root.AddCommand(newPublishCmd())
+
+	// `publish` runs the configured default profile on its own; each provider
+	// hangs a flag-driven subcommand (`publish github`, `publish s3`) under it.
+	// `setup` collects the optional bootstrap subcommand of any provider that
+	// has one (currently just github).
+	publishCmd := newPublishCmd()
+	setupCmd := newSetupCmd()
 	for _, p := range provider.All() {
-		root.AddCommand(p.Command())
+		publishCmd.AddCommand(p.PublishCommand())
+		if s, ok := p.(provider.Setupper); ok {
+			setupCmd.AddCommand(s.SetupCommand())
+		}
+	}
+	root.AddCommand(publishCmd)
+	if setupCmd.HasSubCommands() {
+		root.AddCommand(setupCmd)
 	}
 	err := root.Execute()
 	if err == nil {
@@ -82,9 +95,22 @@ func newPublishCmd() *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show what would be uploaded without writing")
-	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "per-file progress and SDK detail")
+	// Persistent so the provider subcommands (publish github/s3) inherit the
+	// exact same flag — a single backing value, regardless of whether --dry-run
+	// is given before or after the provider name. Avoids a shadowed duplicate
+	// per subcommand silently diverging (e.g. a dry run becoming a real publish).
+	cmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "show what would be uploaded without writing")
+	cmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "per-file progress and SDK detail")
 	return cmd
+}
+
+// newSetupCmd is the parent for provider bootstrap commands; providers attach
+// their own subcommand (e.g. `setup github`). With no subcommand it prints help.
+func newSetupCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "setup <provider>",
+		Short: "Bootstrap a provider's target for use with htmlup",
+	}
 }
 
 func newConfigCmd() *cobra.Command {

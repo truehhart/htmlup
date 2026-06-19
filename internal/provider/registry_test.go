@@ -19,21 +19,18 @@ func resetRegistry() {
 }
 
 type mockProvider struct {
-	name string
-}
-
-func (m *mockProvider) Name() string            { return m.name }
-func (m *mockProvider) Command() *cobra.Command { return &cobra.Command{Use: m.name} }
-
-type mockPublishProvider struct {
-	mockProvider
+	name       string
 	gotPath    string
 	gotProfile config.Profile
 	gotDryRun  bool
 	gotVerbose bool
 }
 
-func (m *mockPublishProvider) Publish(_ context.Context, localPath string, profile config.Profile, dryRun, verbose bool, _ *ui.Output) (Result, error) {
+func (m *mockProvider) Name() string                   { return m.name }
+func (m *mockProvider) ConfigSchema() []ConfigField    { return nil }
+func (m *mockProvider) PublishCommand() *cobra.Command { return &cobra.Command{Use: m.name} }
+
+func (m *mockProvider) Publish(_ context.Context, localPath string, profile config.Profile, dryRun, verbose bool, _ *ui.Output) (Result, error) {
 	m.gotPath = localPath
 	m.gotProfile = profile
 	m.gotDryRun = dryRun
@@ -107,7 +104,7 @@ func TestAll(t *testing.T) {
 func TestPublishConfigured(t *testing.T) {
 	t.Cleanup(resetRegistry)
 
-	p := &mockPublishProvider{mockProvider: mockProvider{name: "mock"}}
+	p := &mockProvider{name: "mock"}
 	Register(p)
 	cfg := config.Config{
 		Default: "mock.personal",
@@ -133,7 +130,7 @@ func TestPublishConfigured(t *testing.T) {
 func TestPublishConfiguredErrorsWithoutDefault(t *testing.T) {
 	t.Cleanup(resetRegistry)
 
-	Register(&mockPublishProvider{mockProvider: mockProvider{name: "mock"}})
+	Register(&mockProvider{name: "mock"})
 	cfg := config.Config{
 		Providers: map[string]map[string]config.Profile{
 			"mock": {
@@ -151,7 +148,7 @@ func TestPublishConfiguredErrorsWithoutDefault(t *testing.T) {
 func TestPublishConfiguredUsesOnlyProfileWithoutDefault(t *testing.T) {
 	t.Cleanup(resetRegistry)
 
-	p := &mockPublishProvider{mockProvider: mockProvider{name: "mock"}}
+	p := &mockProvider{name: "mock"}
 	Register(p)
 	cfg := config.Config{
 		Providers: map[string]map[string]config.Profile{

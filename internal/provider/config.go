@@ -26,11 +26,7 @@ func PublishConfigured(ctx context.Context, localPath string, cfg htmlconfig.Con
 	if !ok {
 		return Result{}, fmt.Errorf("unknown provider %q in config default", providerName)
 	}
-	publisher, ok := p.(PublishProvider)
-	if !ok {
-		return Result{}, fmt.Errorf("provider %q does not support publish dispatch", providerName)
-	}
-	return publisher.Publish(ctx, localPath, profile, dryRun, verbose, out)
+	return p.Publish(ctx, localPath, profile, dryRun, verbose, out)
 }
 
 func FlagChanged(cmd *cobra.Command, name string) bool {

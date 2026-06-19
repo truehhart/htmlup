@@ -71,23 +71,10 @@ func (p *Provider) ConfigSchema() []provider.ConfigField {
 	}
 }
 
-func (p *Provider) Command() *cobra.Command {
+func (p *Provider) PublishCommand() *cobra.Command {
+	var profileName string
 	cmd := &cobra.Command{
-		Use:   "s3",
-		Short: "S3 operations",
-	}
-	cmd.AddCommand(p.publishCmd())
-	return cmd
-}
-
-func (p *Provider) publishCmd() *cobra.Command {
-	var (
-		dryRun      bool
-		verbose     bool
-		profileName string
-	)
-	cmd := &cobra.Command{
-		Use:   "publish <path>",
+		Use:   "s3 <path>",
 		Short: "Publish HTML to S3",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -95,6 +82,8 @@ func (p *Provider) publishCmd() *cobra.Command {
 			// misuse, so don't tack the usage screen onto them.
 			cmd.SilenceUsage = true
 			out := ui.Auto()
+			dryRun, _ := cmd.Flags().GetBool("dry-run")
+			verbose, _ := cmd.Flags().GetBool("verbose")
 			profile, _, err := provider.SelectedProfile(cmd, p.Name(), profileName)
 			if err != nil {
 				return err
@@ -124,8 +113,6 @@ func (p *Provider) publishCmd() *cobra.Command {
 	cmd.Flags().StringVar(&p.prefix, "prefix", "", "key prefix (logical folder)")
 	cmd.Flags().StringVar(&p.region, "region", "", "AWS region override")
 	cmd.Flags().StringVar(&profileName, "profile", "", "config profile name to use for s3")
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "show what would be uploaded without writing")
-	cmd.Flags().BoolVarP(&verbose, "verbose", "v", false, "per-file progress and SDK detail")
 	return cmd
 }
 
