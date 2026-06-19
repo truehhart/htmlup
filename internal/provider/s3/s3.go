@@ -19,7 +19,6 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	htmlconfig "github.com/truehhart/htmlup/internal/config"
-	"github.com/truehhart/htmlup/internal/fsutil"
 	"github.com/truehhart/htmlup/internal/provider"
 	"github.com/truehhart/htmlup/internal/ui"
 )
@@ -92,7 +91,7 @@ func (p *Provider) PublishCommand() *cobra.Command {
 			if err := p.validate(); err != nil {
 				return err
 			}
-			files, err := fsutil.ResolveFS(args[0])
+			files, err := provider.PrepareFiles(cmd, args[0], out)
 			if err != nil {
 				return err
 			}
@@ -116,13 +115,9 @@ func (p *Provider) PublishCommand() *cobra.Command {
 	return cmd
 }
 
-func (p *Provider) Publish(ctx context.Context, localPath string, profile htmlconfig.Profile, dryRun, verbose bool, out *ui.Output) (provider.Result, error) {
+func (p *Provider) Publish(ctx context.Context, files fs.FS, profile htmlconfig.Profile, dryRun, verbose bool, out *ui.Output) (provider.Result, error) {
 	p.applyProfile(profile, nil)
 	if err := p.validate(); err != nil {
-		return provider.Result{}, err
-	}
-	files, err := fsutil.ResolveFS(localPath)
-	if err != nil {
 		return provider.Result{}, err
 	}
 	return p.publish(ctx, provider.Target{

@@ -2,15 +2,21 @@ package provider
 
 import (
 	"context"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
+	"testing/fstest"
 
 	"github.com/spf13/cobra"
 
 	"github.com/truehhart/htmlup/internal/config"
 	"github.com/truehhart/htmlup/internal/ui"
 )
+
+// siteFS stands in for a prepared (already resolved/encrypted) file set passed
+// to PublishConfigured.
+var siteFS = fstest.MapFS{"index.html": {Data: []byte("<h1>hi</h1>")}}
 
 func resetRegistry() {
 	for k := range registry {
@@ -20,7 +26,7 @@ func resetRegistry() {
 
 type mockProvider struct {
 	name       string
-	gotPath    string
+	gotFiles   fs.FS
 	gotProfile config.Profile
 	gotDryRun  bool
 	gotVerbose bool
@@ -30,8 +36,8 @@ func (m *mockProvider) Name() string                   { return m.name }
 func (m *mockProvider) ConfigSchema() []ConfigField    { return nil }
 func (m *mockProvider) PublishCommand() *cobra.Command { return &cobra.Command{Use: m.name} }
 
-func (m *mockProvider) Publish(_ context.Context, localPath string, profile config.Profile, dryRun, verbose bool, _ *ui.Output) (Result, error) {
-	m.gotPath = localPath
+func (m *mockProvider) Publish(_ context.Context, files fs.FS, profile config.Profile, dryRun, verbose bool, _ *ui.Output) (Result, error) {
+	m.gotFiles = files
 	m.gotProfile = profile
 	m.gotDryRun = dryRun
 	m.gotVerbose = verbose
@@ -115,15 +121,15 @@ func TestPublishConfigured(t *testing.T) {
 		},
 	}
 
-	result, err := PublishConfigured(context.Background(), "./site", cfg, true, true, ui.Discard())
+	result, err := PublishConfigured(context.Background(), siteFS, cfg, true, true, ui.Discard())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(result.URLs) != 1 || result.URLs[0] != "https://example.test/index.html" {
 		t.Fatalf("result = %#v", result)
 	}
-	if p.gotPath != "./site" || p.gotProfile["repo"] != "owner/repo" || !p.gotDryRun || !p.gotVerbose {
-		t.Fatalf("publisher args = path %q profile %#v dry %v verbose %v", p.gotPath, p.gotProfile, p.gotDryRun, p.gotVerbose)
+	if p.gotFiles == nil || p.gotProfile["repo"] != "owner/repo" || !p.gotDryRun || !p.gotVerbose {
+		t.Fatalf("publisher args = files %v profile %#v dry %v verbose %v", p.gotFiles, p.gotProfile, p.gotDryRun, p.gotVerbose)
 	}
 }
 
@@ -139,7 +145,7 @@ func TestPublishConfiguredErrorsWithoutDefault(t *testing.T) {
 			},
 		},
 	}
-	_, err := PublishConfigured(context.Background(), "./site", cfg, false, false, ui.Discard())
+	_, err := PublishConfigured(context.Background(), siteFS, cfg, false, false, ui.Discard())
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -158,7 +164,7 @@ func TestPublishConfiguredUsesOnlyProfileWithoutDefault(t *testing.T) {
 		},
 	}
 
-	if _, err := PublishConfigured(context.Background(), "./site", cfg, false, false, ui.Discard()); err != nil {
+	if _, err := PublishConfigured(context.Background(), siteFS, cfg, false, false, ui.Discard()); err != nil {
 		t.Fatal(err)
 	}
 	if p.gotProfile["repo"] != "owner/repo" {

@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/huh"
+	"golang.org/x/term"
 )
 
 // ErrAborted is returned when the user cancels an interactive prompt (Ctrl+C or
@@ -95,6 +97,52 @@ func (p *Prompter) Line(spec LineSpec) (string, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		value = spec.Default
+	}
+	return value, nil
+}
+
+// Password reads a secret without echoing it. It requires a terminal — off a
+// TTY it errors rather than silently reading an echoed line, so callers must
+// supply the secret another way (a flag, an env var). Rich terminals get a huh
+// masked field; plain TTYs read via the terminal's no-echo mode.
+func (p *Prompter) Password(label, help string) (string, error) {
+	if !p.tty {
+		return "", errors.New("cannot prompt for a password without a terminal; pass --password or set HTMLUP_PASSWORD")
+	}
+	if p.rich {
+		value := ""
+		input := huh.NewInput().Title(label).EchoMode(huh.EchoModePassword).Value(&value)
+		if help != "" {
+			input = input.Description(help)
+		}
+		input = input.Validate(func(s string) error {
+			if strings.TrimSpace(s) == "" {
+				return errors.New("required")
+			}
+			return nil
+		})
+		if err := p.run(input); err != nil {
+			return "", err
+		}
+		return strings.TrimSpace(value), nil
+	}
+
+	f, ok := p.in.(*os.File)
+	if !ok {
+		return "", errors.New("cannot read password from this input")
+	}
+	if help != "" {
+		fprintf(p.out, "\n  %s\n", help)
+	}
+	fprintf(p.out, "%s: ", label)
+	raw, err := term.ReadPassword(int(f.Fd()))
+	fprintln(p.out, "")
+	if err != nil {
+		return "", err
+	}
+	value := strings.TrimSpace(string(raw))
+	if value == "" {
+		return "", errors.New("required")
 	}
 	return value, nil
 }

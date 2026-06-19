@@ -43,6 +43,7 @@ func main() {
 	root.PersistentFlags().StringVar(&configPath, "config", "", "config file path (default: ~/.htmlup/config.toml)")
 	root.AddCommand(newVersionCmd(info))
 	root.AddCommand(newConfigCmd())
+	root.AddCommand(newEncryptCmd())
 
 	// `publish` runs the configured default profile on its own; each provider
 	// hangs a flag-driven subcommand (`publish github`, `publish s3`) under it.
@@ -87,7 +88,11 @@ func newPublishCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			result, err := provider.PublishConfigured(cmd.Context(), args[0], cfg, dryRun, verbose, out)
+			files, err := provider.PrepareFiles(cmd, args[0], out)
+			if err != nil {
+				return err
+			}
+			result, err := provider.PublishConfigured(cmd.Context(), files, cfg, dryRun, verbose, out)
 			if err != nil {
 				return err
 			}
@@ -101,6 +106,7 @@ func newPublishCmd() *cobra.Command {
 	// per subcommand silently diverging (e.g. a dry run becoming a real publish).
 	cmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "show what would be uploaded without writing")
 	cmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "per-file progress and SDK detail")
+	cmd.PersistentFlags().String("password", "", `encrypt published .html files; "-" prompts without echo, or set HTMLUP_PASSWORD`)
 	return cmd
 }
 

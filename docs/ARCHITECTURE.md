@@ -22,6 +22,7 @@ htmlup publish [<provider>] <path> [flags]
 |---|---|
 | `--dry-run` | enumerate what would be uploaded and the resulting URLs; perform no writes |
 | `-v, --verbose` | per-file progress and SDK-level detail |
+| `--password` | encrypt published `.html` files (see [§8 HTML encryption](#8-html-encryption-optional)). `--password secret` encrypts with `secret`; `--password -` prompts without echo. `HTMLUP_PASSWORD` is the unattended equivalent. Omitted → published as-is. |
 
 **`htmlup publish github`**
 
@@ -118,7 +119,15 @@ All user-facing text is owned by one package, `internal/ui`, so the CLI speaks w
 
 Adding a backend therefore touches no output code: implement `Provider`, emit through the `ui.Output` you're handed, and the contract holds automatically.
 
-## 8. Distribution
+## 8. HTML encryption (optional)
+
+When `--password` (or `HTMLUP_PASSWORD`) is set, each published `.html` / `.htm` file is replaced — *before any provider sees it* — with a self-decrypting page: the document is encrypted with the password and embedded in a small wrapper that prompts for it and decrypts in-browser via the WebCrypto API. Non-HTML files (CSS, JS, images) pass through untouched, so a page's relative links to plaintext assets still resolve after decryption, and a link to another encrypted page just lands on its own prompt.
+
+**Threat model is deliberately modest.** The ciphertext ships to the client, so anyone with the page and the password can read it and offline brute-force is cheap. This gates *casual* access (share-link protection), not confidentiality against a determined attacker — password strength is the only real defense. The wrong-password case fails cleanly (GCM authentication), so it never renders garbage.
+
+**It is a publish-flow transform, not a provider concern.** `provider.PrepareFiles` resolves the path to an `fs.FS` (`fsutil.ResolveFS`) and, when a password is present, wraps it (`htmlcrypt.WrapFS`) so HTML is encrypted lazily on read. Providers receive the resulting `fs.FS` and only upload it — they never touch paths, passwords, or the encryption step, so a new backend gets this for free. Crypto: AES-256-GCM with PBKDF2-SHA256 (600k iterations) key derivation; blob layout `salt(16) ‖ nonce(12) ‖ ciphertext+tag`, base64-encoded. The iteration count is injected into the browser template from the Go constant so the two sides cannot drift (`internal/htmlcrypt`).
+
+## 9. Distribution
 
 GoReleaser produces static binaries for `linux`/`darwin` × `amd64`/`arm64` (no Windows). Releases are cut by the **manually-triggered `release.yaml`** workflow: it takes a `version` input (without the leading `v`), validates it, and runs the check suite. Only then does publish **create and push the `v<version>` tag and check it out**, so artifacts are built *from the tag*, not from whatever the branch happens to be. **GoReleaser** then builds, signs (cosign keyless + GPG), and publishes the release: tar.gz archives, standalone binaries, and a signed `SHA256SUMS`, with notes from the commit log (`docs:`/`chore:` filtered out). `release.mode: replace` makes a retried release land cleanly, and pushing the tag only after checks pass avoids leaving an orphan tag behind a failed run.
 

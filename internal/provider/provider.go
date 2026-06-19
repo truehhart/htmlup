@@ -35,7 +35,7 @@ type Provider interface {
 	Name() string
 	ConfigSchema() []ConfigField
 	PublishCommand() *cobra.Command
-	Publish(ctx context.Context, localPath string, profile config.Profile, dryRun, verbose bool, out *ui.Output) (Result, error)
+	Publish(ctx context.Context, files fs.FS, profile config.Profile, dryRun, verbose bool, out *ui.Output) (Result, error)
 }
 
 // Setupper is an optional capability: a backend that bootstraps its target
