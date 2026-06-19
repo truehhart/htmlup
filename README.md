@@ -1,31 +1,31 @@
 <p align="center">
-  <img src="docs/public/logo.png" alt="htmlup" width="640" />
+  <a href="https://htmlup.truehhart.com"><img src="docs/public/logo.png" alt="htmlup" width="300" /></a>
 </p>
 
-Coding agents like Claude Code often produce standalone HTML — a dashboard, a report, a quick page. Sharing that as a file is awkward: you have to send it around, and links and assets break once it leaves your machine.
+<p align="center"><b>Publish static HTML to a public URL. One command. No server.</b></p>
 
-`htmlup` publishes static HTML to a public URL instead. Point it at a file or a directory and it uploads the contents and prints a link per file — no server to run, no hosting account to set up.
+<p align="center"><i>"I did it before Claude Artifacts became a thing..."</i> 😭</p>
 
-**See it live:** [htmlup.truehhart.com](https://htmlup.truehhart.com) — this project's own landing page, published with `htmlup` itself.
+<p align="center">
+  <a href="https://github.com/truehhart/htmlup/releases"><img src="https://img.shields.io/github/v/release/truehhart/htmlup?sort=semver" alt="release" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="license" /></a>
+  <img src="https://img.shields.io/badge/go-1.26-00ADD8?logo=go&logoColor=white" alt="go 1.26" />
+</p>
 
-Two backends ship today:
+---
 
-- **GitHub Pages** — pushes your files to a repo and lets GitHub Pages serve them.
-- **S3** — uploads objects to a bucket, exposed via CloudFront (a built-in HTTP server may come later).
+Your agent makes HTML — a dashboard, a report, a one-off page. Sharing the file is a pain, and the links break the moment it leaves your machine.
 
-`htmlup` does **no lifecycle management** of what it uploads — it publishes and exits. For GitHub Pages, `htmlup setup github` can install an opt-in cron GitHub Actions workflow in the target repo to expire old pages automatically (see [GitHub Pages cleanup](#github-pages-cleanup) and [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)).
+`htmlup` turns it into a link:
 
-## Stack
+```console
+$ htmlup publish ./report.html
+https://you.github.io/pages/report.html
+```
 
-Go 1.26 · [cobra](https://github.com/spf13/cobra) CLI · [`aws-sdk-go-v2`](https://github.com/aws/aws-sdk-go-v2) (S3) · [`go-github`](https://github.com/google/go-github) (GitHub Pages) · [GoReleaser](https://goreleaser.com) multi-arch builds · [mise](https://mise.jdx.dev) toolchain · Nushell scripts.
-
-Architecture & command reference: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Agent conventions: [`CLAUDE.md`](CLAUDE.md).
-
-> **Status:** working software, early days. The GitHub Pages and S3 publish flows and `setup github` are implemented; expect rough edges and an evolving feature set.
+It pushes your files to a backend you already have and prints the public URL. Two ship today — **GitHub Pages** (served from a repo) and **S3** (fronted by CloudFront) — and adding more is a single provider package. No server to run, no hosting account to sign up for.
 
 ## Install
-
-[Homebrew](https://brew.sh) (macOS and Linux):
 
 ```sh
 brew tap truehhart/tap
@@ -33,15 +33,57 @@ brew trust truehhart/tap   # one-time: Homebrew 6+ requires trusting non-officia
 brew install --cask htmlup
 ```
 
-Otherwise grab a prebuilt binary or `.tar.gz` for your platform from the
-[releases page](https://github.com/truehhart/htmlup/releases) (see
-[Verifying releases](#verifying-releases)), or build from source below.
+No Homebrew? Grab a [prebuilt binary](https://github.com/truehhart/htmlup/releases) ([verify it](#verifying-releases)) or [build from source](#build-from-source).
 
-## Getting started
+## Use
 
-> Building from source — for using the released CLI, see [Install](#install).
+```sh
+htmlup publish ./site                              # your default profile
+htmlup publish github ./site --repo owner/repo     # GitHub Pages
+htmlup publish s3 ./site --bucket my-bucket        # S3 (via CloudFront)
+```
 
-Prerequisite: [mise](https://mise.jdx.dev) installed.
+Pass a file or a directory; directories upload recursively. URLs print to **stdout**, one per line — `htmlup … > urls.txt` captures just the links. Add `--dry-run` to preview, `-v` for progress.
+
+GitHub Pages targets are auto-detected from the repo's Pages settings, so you rarely need `--branch`/`--dir`. `htmlup` only ever uploads — it never deletes; [`setup github`](#github-pages-setup--cleanup) installs an opt-in cron workflow to expire old pages.
+
+## Auth
+
+No credentials stored — each SDK uses its own standard mechanism:
+
+- **GitHub** — `GITHUB_TOKEN` / `GH_TOKEN`, or whatever the [`gh`](https://cli.github.com) CLI already has.
+- **AWS** — the default credential chain (env vars, `~/.aws/credentials`, SSO, instance role).
+
+## Claude skill
+
+This repo is also a [Claude Code plugin marketplace](https://docs.claude.com/en/docs/claude-code/plugins) — install the skill and Claude can drive the CLI for you:
+
+```sh
+/plugin marketplace add truehhart/htmlup
+/plugin install htmlup@htmlup
+```
+
+<details>
+<summary><b>GitHub Pages setup &amp; cleanup</b></summary>
+
+`htmlup setup github` bootstraps a repo in one shot:
+
+```sh
+htmlup setup github --repo owner/name [--branch gh-pages] [--ttl-days 30] [--cron "0 3 * * 0"] [--cname example.com] [--exclude staging,*.keep] [--dry-run] [-v]
+```
+
+It (1) publishes a generated hello-world `index.html` to the Pages branch, (2) enables GitHub Pages, and (3) installs a cron cleanup workflow at `.github/workflows/htmlup-cleanup.yaml` on the default branch.
+
+The workflow runs on the `--cron` schedule (default weekly, Sunday 03:00 UTC) and deletes top-level entries older than `--ttl-days` (default 30), by each entry's last commit date. It never removes `index.html`, `CNAME`, `.nojekyll`, or `.github`; use `--exclude` to protect more. Removals are GitHub-signed (Verified) commits made via the API — no signing keys needed in your repo.
+
+An existing `CNAME` is read to report the custom-domain URL and left in place — `htmlup` never writes one (use `setup github --cname` for that). Pass `--no-auto --branch … --dir …` to target manually.
+
+</details>
+
+<details>
+<summary><b>Build from source</b></summary>
+
+Prerequisite: [mise](https://mise.jdx.dev).
 
 ```sh
 mise install        # go 1.26, nushell, golangci-lint, gofumpt, goreleaser
@@ -50,94 +92,35 @@ mise run build      # produces ./bin/htmlup
 mise run check      # fmt + vet + lint + test (also runs on pre-commit)
 ```
 
-## Usage
+</details>
 
-`publish` is one verb: with no provider it runs your configured default profile (`htmlup publish ./site`); naming a provider picks a flag-driven subcommand whose flags are scoped to it. `<path>` is a single `.html` file or a directory (uploaded recursively, relative structure preserved).
-
-By default `publish github` targets wherever GitHub Pages already serves from (its branch + source path are auto-detected), so you usually don't pass `--branch`/`--dir`. Set them explicitly — or pass `--no-auto` — for manual targeting (falls back to `gh-pages` when Pages isn't set up yet). If the target has a `CNAME` file, it reads it to report the custom-domain URL and leaves it in place; it never writes one (use `setup github --cname` to configure a custom domain).
-
-```sh
-# Configured default profile — no flags
-htmlup publish ./site
-
-# GitHub Pages — branch/dir auto-detected from the repo's Pages settings
-htmlup publish github ./site --repo owner/repo [--no-auto --branch gh-pages --dir docs]
-
-# S3 (exposed via CloudFront)
-htmlup publish s3 ./site --bucket my-bucket [--prefix path/] [--region us-east-1]
-```
-
-Each `publish` command also accepts `--dry-run` (enumerate what would be uploaded and the resulting URLs, write nothing) and `-v/--verbose` (per-file progress). On success the command prints a public URL per file, one per line.
-
-Output is split for scripting: the public URLs go to **stdout** (one per line), while progress, dry-run previews, warnings, and next-step hints go to **stderr** — so `htmlup … > urls.txt` captures just the links. Status is colorized only on an interactive terminal and respects [`NO_COLOR`](https://no-color.org/).
-
-### GitHub Pages cleanup
-
-`htmlup setup github` bootstraps a repo for use with `htmlup` in one shot:
-
-```sh
-htmlup setup github --repo owner/name [--branch gh-pages] [--ttl-days 30] [--cron "0 3 * * 0"] [--cname example.com] [--exclude staging,*.keep] [--dry-run] [-v]
-```
-
-It:
-
-1. Publishes a generated hello-world `index.html` to the Pages branch.
-2. Enables GitHub Pages (branch source, path `/`).
-3. Installs an opt-in cron cleanup workflow at `.github/workflows/htmlup-cleanup.yaml` on the repo's **default branch**.
-
-The cleanup workflow runs on the `--cron` schedule (default weekly, Sunday 03:00 UTC) and deletes published top-level entries on the Pages branch older than `--ttl-days` (default 30), based on each entry's last commit date. It never removes `index.html`, `CNAME`, `.nojekyll`, or `.github`; pass `--exclude` (repeatable or comma-separated glob patterns, e.g. `--exclude staging,*.keep`) to protect more entries. Removals are recorded as a GitHub-signed (Verified) commit created via the API, so no signing keys are needed in your repo.
-
-## Authentication
-
-`htmlup` never stores credentials — each SDK uses its own standard mechanism:
-
-- **GitHub** — `GITHUB_TOKEN` / `GH_TOKEN`, or the token already configured by the [`gh`](https://cli.github.com) CLI.
-- **AWS** — the default credential chain: env vars, `~/.aws/credentials`, SSO, or instance/role credentials.
-
-## Claude skill marketplace
-
-This repo doubles as a [Claude Code plugin marketplace](https://docs.claude.com/en/docs/claude-code/plugins). It publishes the **`htmlup`** skill, which teaches Claude how to drive the CLI.
-
-```sh
-# In Claude Code
-/plugin marketplace add truehhart/htmlup
-/plugin install htmlup@htmlup
-```
-
-Marketplace manifest: [`.claude-plugin/marketplace.json`](.claude-plugin/marketplace.json). Skill source: [`plugins/htmlup/`](plugins/htmlup/).
-
-## Verifying releases
+<details>
+<summary><b>Verifying releases</b></summary>
 
 Every release publishes a `SHA256SUMS` file signed with both [Sigstore cosign](https://docs.sigstore.dev/) (keyless) and GPG.
 
 **GPG fingerprint:** `5B91 15D2 57D7 B6FB 65FF  FCA7 DE4C 8787 683F EE7E`
 
-### 1. Verify checksums
-
 ```sh
-# Download the binary and SHA256SUMS from the release page, then:
+# 1. Verify checksums (download the binary + SHA256SUMS first)
 sha256sum --check htmlup_*_SHA256SUMS        # Linux
 shasum -a 256 --check htmlup_*_SHA256SUMS    # macOS
-```
 
-### 2. Verify cosign signature (keyless)
-
-```sh
+# 2. Verify cosign signature (keyless)
 cosign verify-blob \
   --certificate htmlup_*_SHA256SUMS.pem \
   --signature htmlup_*_SHA256SUMS.sig \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   --certificate-identity-regexp 'github\.com/truehhart/htmlup' \
   htmlup_*_SHA256SUMS
-```
 
-### 3. Verify GPG signature
-
-```sh
-gpg --import release/pubkey.asc                                  # one-time: import from this repo
+# 3. Verify GPG signature
+gpg --import release/pubkey.asc
 gpg --verify htmlup_*_SHA256SUMS.gpgsig htmlup_*_SHA256SUMS
 ```
 
-## License
+</details>
 
-[MIT](LICENSE) © Dmitrii Parshenkov
+---
+
+<sub>Working software, early days — expect rough edges. Design notes: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) · [MIT](LICENSE) © Dmitrii Parshenkov</sub>
